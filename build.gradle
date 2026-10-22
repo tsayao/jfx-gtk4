@@ -225,8 +225,18 @@ tasks.register('checkRequirements') {
             types != null && !types.contains(type)
         }
         if (!absent.isEmpty()) {
-            missing << ("GObject introspection types: ${absent.join(', ')}; GTK 4.14 or later is required, "
-                    + "with GtkGraphicsOffload and GdkDmabufTextureBuilder").toString()
+            missing << "GObject introspection types: ${absent.join(', ')}".toString()
+        }
+        // The wrappers are generated from the GTK 4.22 API, and the glass checks the
+        // version of GTK at run time, so the plugin built with it runs on GTK 4.14
+        def gtkGir = new File(gir, 'Gtk-4.0.gir')
+        if (gtkGir.isFile()) {
+            def minor = (gtkGir.text =~ /version="4\.(\d+)"/).collect { it[1] as int }.max() ?: 0
+            if (minor < 22) {
+                missing << ("GObject introspection files of GTK 4.22 or later: ${gtkGir} is of GTK 4.${minor}; "
+                        + "build on a system with GTK 4.22, or set -PgirDir=DIR to its gir-1.0 directory "
+                        + "(the plugin runs on GTK 4.14)").toString()
+            }
         }
         if (!registry.isFile()) {
             missing << "Vulkan registry: ${registry} (Fedora: vulkan-headers; or set -PvkRegistry=FILE)".toString()

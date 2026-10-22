@@ -11,9 +11,11 @@
 - A JavaFX SDK of the version the plugin is built against, since it uses
   internal APIs, with no `com.sun.glass.ui.gtk4` or `com.sun.prism.vk`
   classes in `javafx.graphics`
-- GTK 4.14 or later, with `GtkGraphicsOffload` and `GdkDmabufTextureBuilder`,
-  and its GObject introspection files (`Gtk-4.0.gir`, `Gdk-4.0.gir`,
-  `GdkWayland-4.0.gir`, `Adw-1.gir`, ...)
+- The GObject introspection files of GTK 4.22 or later (`Gtk-4.0.gir`,
+  `Gdk-4.0.gir`, `GdkWayland-4.0.gir`, `Adw-1.gir`, ...), since the wrappers
+  are generated from its API. The glass checks the version of GTK at run time,
+  so the plugin runs on GTK 4.14 or later. On a system with an older GTK, set
+  `girDir` to the `gir-1.0` directory of a newer one.
 - The Vulkan registry (`vk.xml`) and a Vulkan 1.3 driver
 - `libshaderc` or `glslc`
 

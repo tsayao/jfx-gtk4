@@ -66,10 +66,6 @@
 # The environment variables GDK_DISABLE and GSK_DEBUG are passed to the demos.
 # The extra JVM options are passed to the demos.
 #
-# The first run of each demo and pipeline records an AOT cache of the JDK and
-# JavaFX classes, which later runs use to start faster. It is rebuilt when the
-# SDK or the plugin changes.
-#
 # Examples:
 #   ./launcher.sh --apps=nebula,fractals
 #   ./launcher.sh --apps=all --compositor=kwin
@@ -168,12 +164,6 @@ if [ ! -f "$RUN_ARGS" ]; then
     echo "Plugin not built: $RUN_ARGS not found (run ./gradlew jar -PjfxSdk=DIR)" >&2
     exit 1
 fi
-# The paths in build/run.args under the home directory are relative to $ROOT
-SDK_LIB=$(sed -n 's/^"--module-path=\(.*\)"$/\1/p' "$RUN_ARGS")
-if ! SDK_LIB=$(cd "$ROOT" && cd "$SDK_LIB" 2>/dev/null && pwd); then
-    echo "JavaFX SDK of the plugin not found: $SDK_LIB (rebuild with ./gradlew jar -PjfxSdk=DIR)" >&2
-    exit 1
-fi
 if [ -z "$WAYLAND_DISPLAY" ]; then
     echo "This script runs inside a Wayland session" >&2
     exit 1
@@ -222,16 +212,23 @@ if [ "$COMPOSITOR" = gnome ]; then
     fi
 fi
 
+LOGS=${TMPDIR:-/tmp}/jfx-gtk4-launcher-$COMPOSITOR
+[ "$COMPOSITOR" = gnome ] && LOGS=$LOGS-$TOOLBOX
+mkdir -p "$LOGS"
+
 if [ "$COMPOSITOR" != none ] && [ -z "$LAUNCHER_SESSION" ]; then
     export LAUNCHER_SESSION=1
+    # The services of the private session get a dconf database of their own, as
+    # a write to the user database also notifies the dconf clients of the host
+    # (through XDG_RUNTIME_DIR/dconf), and the GNOME Shell of the host can crash
+    # on that
+    printf 'user-db:jfx-gtk4-launcher\n' > "$LOGS/dconf-profile"
+    export DCONF_PROFILE=$LOGS/dconf-profile
     relaunch dbus-run-session --
     exit $?
 fi
 
 SOCKET=wayland-launcher-$COMPOSITOR-$$
-LOGS=${TMPDIR:-/tmp}/jfx-gtk4-launcher-$COMPOSITOR
-[ "$COMPOSITOR" = gnome ] && LOGS=$LOGS-$TOOLBOX
-mkdir -p "$LOGS"
 HOST_DISPLAY=$WAYLAND_DISPLAY
 BUS=$DBUS_SESSION_BUS_ADDRESS
 CHILDREN=
@@ -255,19 +252,6 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
-
-aot_option() {
-    aot=$LOGS/$1-$PIPELINE.aot
-    if [ -f "$aot" ] && { [ -n "$(find "$SDK_LIB" -newer "$aot" -name '*.jar' | head -1)" ] \
-            || [ "$ROOT/build/libs/jfx-gtk4.jar" -nt "$aot" ]; }; then
-        rm -f "$aot"
-    fi
-    if [ -f "$aot" ]; then
-        echo "-XX:AOTCache=$aot"
-    else
-        echo "-XX:AOTCacheOutput=$aot"
-    fi
-}
 
 run() {
     cd "$ROOT" || exit 1
@@ -384,7 +368,7 @@ start_$COMPOSITOR
 
 for class in $CLASSES; do
     name=$(printf '%s' "${class%Demo}" | tr '[:upper:]' '[:lower:]')
-    (run "$(aot_option "$class")" -Dprism.verbose=true -Djavafx.enablePreview=true \
+    (run -Dprism.verbose=true -Djavafx.enablePreview=true \
         -Djavafx.suppressPreviewWarning=true $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
         | tee "$LOGS/$name.log" | sed -u "s/^/[$name] /") &
     PIDS="$PIDS $!"
