@@ -321,7 +321,8 @@ public class VulkanBindingsGeneratorTask extends DefaultTask {
     private void parseEnums(Element enums) {
         String name = enums.getAttribute("name");
         String type = enums.getAttribute("type");
-        if (type.equals("constants")) {
+        // Registries before 1.3.2xx do not have type="constants"
+        if (type.equals("constants") || name.equals("API Constants")) {
             for (Element e : children(enums, "enum")) {
                 if (e.hasAttribute("alias")) {
                     enumAliases.put(e.getAttribute("name"), e.getAttribute("alias"));
