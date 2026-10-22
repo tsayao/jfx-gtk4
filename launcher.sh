@@ -38,15 +38,14 @@
 # so it leaves the running desktop untouched, and is closed when the last demo
 # exits.
 #
-# Requires a JavaFX SDK and runs inside a Wayland session. The plugin is built
-# with the SDK when build/run.args does not exist or names another SDK.
+# Requires the plugin built with ./gradlew jar, and runs the demos with the
+# JavaFX SDK it was built with (build/run.args), inside a Wayland session.
 #
 # Usage: ./launcher.sh [options] [-- extra JVM options]
 #
 # Options:
 #   --apps=a,b,...          demos to run, by name (see --list), or "all"
 #                           (nebula)
-#   --sdk=DIR               JavaFX SDK ($JFX_SDK or ../jfx/build/sdk)
 #   --compositor=gnome|kwin|none
 #                           nested compositor, or none for the current
 #                           desktop (none)
@@ -74,13 +73,12 @@
 # Examples:
 #   ./launcher.sh --apps=nebula,fractals
 #   ./launcher.sh --apps=all --compositor=kwin
-#   ./launcher.sh --apps=stage --compositor=gnome --sdk=../jfx/build/sdk
+#   ./launcher.sh --apps=stage --compositor=gnome
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 DEMOS=$ROOT/demos
 
 APPS=nebula
-SDK=${JFX_SDK:-$ROOT/../jfx/build/sdk}
 COMPOSITOR=none
 PIPELINE=vk
 BACKDROP=on
@@ -110,7 +108,6 @@ demos() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --apps=*) APPS=${1#*=} ;;
-        --sdk=*) SDK=${1#*=} ;;
         --compositor=*) COMPOSITOR=${1#*=} ;;
         --pipeline=*) PIPELINE=${1#*=} ;;
         --backdrop=*) BACKDROP=${1#*=} ;;
@@ -166,24 +163,24 @@ if [ -z "$CLASSES" ]; then
     exit 2
 fi
 
-if [ ! -d "$SDK/lib" ]; then
-    echo "JavaFX SDK not found: $SDK (use --sdk=DIR or JFX_SDK)" >&2
+RUN_ARGS=$ROOT/build/run.args
+if [ ! -f "$RUN_ARGS" ]; then
+    echo "Plugin not built: $RUN_ARGS not found (run ./gradlew jar -PjfxSdk=DIR)" >&2
     exit 1
 fi
-SDK=$(cd "$SDK" && pwd)
+# The paths in build/run.args under the home directory are relative to $ROOT
+SDK_LIB=$(sed -n 's/^"--module-path=\(.*\)"$/\1/p' "$RUN_ARGS")
+if ! SDK_LIB=$(cd "$ROOT" && cd "$SDK_LIB" 2>/dev/null && pwd); then
+    echo "JavaFX SDK of the plugin not found: $SDK_LIB (rebuild with ./gradlew jar -PjfxSdk=DIR)" >&2
+    exit 1
+fi
 if [ -z "$WAYLAND_DISPLAY" ]; then
     echo "This script runs inside a Wayland session" >&2
     exit 1
 fi
 
-RUN_ARGS=$ROOT/build/run.args
-if [ ! -f /run/.toolboxenv ] && { [ ! -f "$RUN_ARGS" ] || ! grep -qF "\"--module-path=$SDK/lib\"" "$RUN_ARGS"; }; then
-    echo "Building the plugin with $SDK"
-    (cd "$ROOT" && sh ./gradlew -q jar -PjfxSdk="$SDK") || exit 1
-fi
-
 relaunch() {
-    "$@" sh "$0" --apps="$APPS" --sdk="$SDK" --compositor="$COMPOSITOR" --pipeline="$PIPELINE" \
+    "$@" sh "$0" --apps="$APPS" --compositor="$COMPOSITOR" --pipeline="$PIPELINE" \
         --backdrop="$BACKDROP" --toolbox="$TOOLBOX" --toolbox-release="$TOOLBOX_RELEASE" \
         --wallpaper="$WALLPAPER" --size="$SIZE" --scale="$SCALE" --screenshot="$SCREENSHOT" \
         --screenshot-delay="$SCREENSHOT_DELAY" -- $JVM_OPTIONS
@@ -261,7 +258,7 @@ trap 'exit 130' INT TERM
 
 aot_option() {
     aot=$LOGS/$1-$PIPELINE.aot
-    if [ -f "$aot" ] && { [ -n "$(find "$SDK/lib" -newer "$aot" -name '*.jar' | head -1)" ] \
+    if [ -f "$aot" ] && { [ -n "$(find "$SDK_LIB" -newer "$aot" -name '*.jar' | head -1)" ] \
             || [ "$ROOT/build/libs/jfx-gtk4.jar" -nt "$aot" ]; }; then
         rm -f "$aot"
     fi
@@ -273,6 +270,7 @@ aot_option() {
 }
 
 run() {
+    cd "$ROOT" || exit 1
     exec java @"$RUN_ARGS" \
         --add-exports javafx.graphics/com.sun.prism=ALL-UNNAMED \
         -Dprism.order=$PIPELINE $BACKDROP_OPTION "$@"

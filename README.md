@@ -105,7 +105,8 @@ not needed, but JavaFX reports it as an unsupported configuration and the main
 class must not extend `Application`.
 
 `./gradlew -q runArgs -PjfxSdk=DIR` prints these arguments for an SDK, and the
-build writes them to `build/run.args`, for `java @build/run.args`.
+build writes them to `build/run.args`, for `java @build/run.args` (paths under the
+home directory are relative to the project directory, from where it must run).
 
 JavaFX loads `com.sun.glass.ui.gtk4.Gtk4PlatformFactory` for
 `-Dglass.platform=Gtk4` and `com.sun.prism.vk.VKPipeline` for
@@ -150,19 +151,19 @@ the platform: `aurora`, `disco`, `fireworks`, `fractals`, `nebula`,
 ## Launcher
 
 `launcher.sh` runs one or more demos together, on the current desktop or in a
-nested compositor. It builds the plugin with the given SDK when needed.
+nested compositor, with the plugin and the JavaFX SDK of `build/run.args`, so
+the plugin is built first with `./gradlew jar`.
 
 ```
 ./launcher.sh --apps=nebula,fractals
 ./launcher.sh --apps=all --compositor=kwin
-./launcher.sh --apps=stage --compositor=gnome --sdk=../jfx/build/sdk
+./launcher.sh --apps=stage --compositor=gnome
 ./launcher.sh --apps=disco --pipeline=sw --backdrop=off -- -Dglass.gtk4.verbose=all
 ```
 
 | Option                       | Description                                                     |
 |------------------------------|-----------------------------------------------------------------|
 | `--apps=a,b,...`             | Demos to run, by name, or `all` (`nebula`)                     |
-| `--sdk=DIR`                  | JavaFX SDK (`$JFX_SDK` or `../jfx/build/sdk`)                  |
 | `--compositor=none\|gnome\|kwin` | Current desktop, or a nested compositor (`none`)        |
 | `--pipeline=vk\|sw`           | Prism pipeline (`vk`)                                          |
 | `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |

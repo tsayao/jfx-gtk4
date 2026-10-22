@@ -32,7 +32,8 @@ def shaderCompilerPackages = [
     'javafx.graphics/com.sun.scenario.effect.light',
 ]
 def exportsOf = { packages -> packages.collect { "--add-exports=${it}=ALL-UNNAMED".toString() } }
-def jfxModuleArgs = ["--module-path=${jfxLib}".toString(), '--add-modules=javafx.graphics'] + exportsOf(jfxPackages)
+def moduleArgs = { lib -> ["--module-path=${lib}".toString(), '--add-modules=javafx.graphics'] + exportsOf(jfxPackages) }
+def jfxModuleArgs = moduleArgs(jfxLib)
 def shaderCompilerArgs = jfxModuleArgs + exportsOf(shaderCompilerPackages)
 
 def genDir = layout.buildDirectory.dir('generated/sources')
@@ -423,22 +424,33 @@ tasks.named('jar') {
     archiveFileName = 'jfx-gtk4.jar'
 }
 
-def runArgs = jfxModuleArgs + [
-    '--enable-native-access=javafx.graphics,ALL-UNNAMED',
-    '-Dglass.platform=Gtk4',
-    '-Dprism.order=vk,sw',
-]
+def runArgs = { lib ->
+    moduleArgs(lib) + [
+        '--enable-native-access=javafx.graphics,ALL-UNNAMED',
+        '-Dglass.platform=Gtk4',
+        '-Dprism.order=vk,sw',
+    ]
+}
+
+// Paths under the home directory are written relative to the project directory,
+// so that build/run.args does not name the home directory of the user
+def userHome = new File(System.getProperty('user.home')).toPath().toAbsolutePath().normalize()
+def projectPath = rootDir.toPath().toAbsolutePath().normalize()
+def portablePath = { File f ->
+    def path = f.toPath().toAbsolutePath().normalize()
+    (path.startsWith(userHome) ? projectPath.relativize(path) : path).toString()
+}
 
 tasks.register('writeRunArgs') {
     description = 'Writes the JVM arguments to run an application with this platform to build/run.args'
     def jar = tasks.named('jar').flatMap { it.archiveFile }
     def out = layout.buildDirectory.file('run.args')
-    inputs.property('runArgs', runArgs)
-    inputs.property('jfxSdk', jfxSdk.toString())
+    def args = runArgs(portablePath(jfxLib))
+    inputs.property('runArgs', args)
     outputs.file out
     doLast {
-        def args = runArgs + ['--add-modules=ALL-MODULE-PATH', '-cp', jar.get().asFile.toString()]
-        out.get().asFile.text = args.collect { '"' + it.replace('\\', '\\\\') + '"' }.join('\n') + '\n'
+        def all = args + ['--add-modules=ALL-MODULE-PATH', '-cp', portablePath(jar.get().asFile)]
+        out.get().asFile.text = all.collect { '"' + it.replace('\\', '\\\\') + '"' }.join('\n') + '\n'
     }
 }
 
@@ -451,6 +463,6 @@ tasks.register('runArgs') {
     def jar = tasks.named('jar').flatMap { it.archiveFile }
     dependsOn 'jar'
     doLast {
-        println((runArgs + ['-cp', jar.get().asFile.toString()]).join(' '))
+        println((runArgs(jfxLib) + ['-cp', jar.get().asFile.toString()]).join(' '))
     }
 }
