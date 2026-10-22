@@ -150,6 +150,20 @@ the platform: `aurora`, `disco`, `fireworks`, `fractals`, `nebula`,
 `render` and `stage`. `Wallpaper.java` is the animated desktop used by
 `launcher.sh` under KWin.
 
+Others test the platform integration, after the manual tests of OpenJFX:
+
+| Demo            | Tests                                                                    |
+|-----------------|--------------------------------------------------------------------------|
+| `dragdrop`      | Transfer modes and modifiers, data formats, drag images and offsets, drops from and to other applications, full drag |
+| `clipboard`     | Copy and paste of text, HTML, RTF, URLs, files, images and custom formats, checked by a second process |
+| `touch`         | Touch points, and the scroll, zoom, rotate and swipe gestures of touch screens and touchpads |
+| `robot`         | A self test of `javafx.scene.robot.Robot`: pointer, buttons, wheel, keyboard, pixels and screen capture |
+| `accessibility` | Accessible roles, names and states, live changes, and an inspector of the accessible attributes |
+
+The input tests of `robot` need the GNOME test session, so it runs with
+`./launcher.sh --apps=robot --compositor=gnome`, which passes
+`-Dglass.gtk4.testSession=gnome` to it.
+
 ## Launcher
 
 `launcher.sh` runs one or more demos together, on the current desktop or in a

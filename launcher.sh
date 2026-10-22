@@ -64,12 +64,14 @@
 #   --help, -h              show this help and exit
 #
 # The environment variables GDK_DISABLE and GSK_DEBUG are passed to the demos.
-# The extra JVM options are passed to the demos.
+# The extra JVM options are passed to the demos. Under GNOME, the robot demo
+# gets -Dglass.gtk4.testSession=gnome, which its input tests need.
 #
 # Examples:
 #   ./launcher.sh --apps=nebula,fractals
 #   ./launcher.sh --apps=all --compositor=kwin
 #   ./launcher.sh --apps=stage --compositor=gnome
+#   ./launcher.sh --apps=robot --compositor=gnome
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 DEMOS=$ROOT/demos
@@ -368,8 +370,13 @@ start_$COMPOSITOR
 
 for class in $CLASSES; do
     name=$(printf '%s' "${class%Demo}" | tr '[:upper:]' '[:lower:]')
+    # The robot generates input through the remote desktop session of GNOME
+    TEST_SESSION=
+    if [ "$class" = RobotDemo ] && [ "$COMPOSITOR" = gnome ]; then
+        TEST_SESSION=-Dglass.gtk4.testSession=gnome
+    fi
     (run -Dprism.verbose=true -Djavafx.enablePreview=true \
-        -Djavafx.suppressPreviewWarning=true $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
+        -Djavafx.suppressPreviewWarning=true $TEST_SESSION $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
         | tee "$LOGS/$name.log" | sed -u "s/^/[$name] /") &
     PIDS="$PIDS $!"
 done

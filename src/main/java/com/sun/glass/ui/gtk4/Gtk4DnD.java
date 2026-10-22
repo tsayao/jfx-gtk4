@@ -231,12 +231,21 @@ final class Gtk4DnD {
 
         @SuppressWarnings("unused")
         void onFinished(GObject drag) {
+            if (done) {
+                return;
+            }
             performedAction = toGlassAction(currentDrag.getSelectedAction());
             finish();
         }
 
+        // The compositor can cancel the data source after the drop finished,
+        // before the nested loop returns: the drag already ended then
         @SuppressWarnings("unused")
         void onCancel(GObject drag, int reason) {
+            Gtk4Log.log(DND, "drag cancelled: reason=%d done=%b", reason, done);
+            if (done) {
+                return;
+            }
             performedAction = Clipboard.ACTION_NONE;
             finish();
         }
