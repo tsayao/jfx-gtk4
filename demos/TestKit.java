@@ -1094,6 +1094,42 @@ final class TestKit {
         return fx(() -> t.detail.get());
     }
 
+    /**
+     * Opaque lists for the popups of the combo and choice boxes, which take
+     * the stylesheets of the lab, whose lists are transparent.
+     */
+    private static final String POPUP_CSS = """
+        .combo-box-popup > .list-view {
+            -fx-background-color: #181d2b;
+            -fx-background-radius: 8;
+            -fx-border-color: rgba(255, 255, 255, 0.16);
+            -fx-border-radius: 8;
+            -fx-padding: 2;
+            -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 14, 0, 0, 4);
+        }
+        .combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell {
+            -fx-background-color: transparent;
+            -fx-text-fill: #e8eef7;
+            -fx-padding: 4 10 4 10;
+        }
+        .combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell:hover {
+            -fx-background-color: rgba(255, 255, 255, 0.08);
+        }
+        .combo-box-popup > .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell:filled:selected {
+            -fx-background-color: rgba(99, 102, 241, 0.55);
+        }
+        .choice-box > .context-menu, .context-menu {
+            -fx-background-color: #181d2b;
+            -fx-background-radius: 8;
+            -fx-border-color: rgba(255, 255, 255, 0.16);
+            -fx-border-radius: 8;
+        }
+        .context-menu .menu-item .label { -fx-text-fill: #e8eef7; }
+        .context-menu .menu-item:focused { -fx-background-color: rgba(99, 102, 241, 0.55); }
+        """;
+    static final String POPUP_STYLESHEET = "data:text/css;base64,"
+            + Base64.getEncoder().encodeToString(POPUP_CSS.getBytes(StandardCharsets.UTF_8));
+
     private static final String DIALOG_CSS = """
         .root {
             -fx-font-family: "Adwaita Sans", "Cantarell", "System";

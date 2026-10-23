@@ -219,7 +219,7 @@ public class TestsDemo extends Application {
         // The lab keeps its own look: its stylesheet, and its .root rules on the holder
         StackPane holder = new StackPane(content);
         holder.getStyleClass().add("root");
-        holder.getStylesheets().add(stylesheet);
+        holder.getStylesheets().addAll(stylesheet, TestKit.POPUP_STYLESHEET);
         Tab tab = new Tab(name, holder);
         tabs.getTabs().add(tab);
         labs.add(new Lab(name, suite, tab));

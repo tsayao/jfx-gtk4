@@ -176,9 +176,15 @@ public final class Gtk4Application extends Application {
         super.finishTerminating();
     }
 
+    /**
+     * Transparent windows present their frames as the opaque ones do: the
+     * dma-bufs of the pipelines carry premultiplied alpha, and reading each
+     * frame back to upload it costs more than the frame. The software
+     * pipeline uploads its frames anyway.
+     */
     @Override
     public boolean shouldUpdateWindow() {
-        return true;
+        return false;
     }
 
     @Override

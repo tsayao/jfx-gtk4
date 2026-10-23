@@ -173,6 +173,7 @@ final class GLDevice {
     private static final int EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT = 1;
     private static final int EGL_RENDERABLE_TYPE = 0x3040;
     private static final int EGL_OPENGL_BIT = 0x0008;
+    private static final int EGL_CONFIG_CAVEAT = 0x3027;
     private static final int EGL_LINUX_DMA_BUF_EXT = 0x3270;
     private static final int EGL_WIDTH = 0x3057;
     private static final int EGL_HEIGHT = 0x3056;
@@ -197,6 +198,7 @@ final class GLDevice {
     private int drmFd = -1;
     private MemorySegment gbm = MemorySegment.NULL;
     private MemorySegment display = MemorySegment.NULL;
+    private MemorySegment config = MemorySegment.NULL;
     private MemorySegment context = MemorySegment.NULL;
     private Thread currentThread;
     private String deviceName;
@@ -287,16 +289,6 @@ final class GLDevice {
             throw new IllegalStateException("eglBindAPI(EGL_OPENGL_API) failed");
         }
         String eglExtensions = eglString(EGL_EXTENSIONS);
-        MemorySegment config = MemorySegment.NULL;
-        if (!eglExtensions.contains("EGL_KHR_no_config_context")) {
-            MemorySegment attribs = arena.allocateFrom(JAVA_INT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE);
-            MemorySegment configs = arena.allocate(ADDRESS);
-            MemorySegment count = arena.allocate(JAVA_INT);
-            if (EGL.eglChooseConfig(display, attribs, configs, 1, count) == 0 || count.get(JAVA_INT, 0) < 1) {
-                throw new IllegalStateException("No EGL configuration for OpenGL");
-            }
-            config = configs.get(ADDRESS, 0);
-        }
         if (!eglExtensions.contains("EGL_KHR_surfaceless_context")) {
             throw new IllegalStateException("EGL_KHR_surfaceless_context is not supported");
         }
@@ -350,8 +342,8 @@ final class GLDevice {
     }
 
     /**
-     * Opens the first render node on which GBM and EGL work, or the one of
-     * -Dprism.gl.device.
+     * Opens the first hardware render node on which GBM and EGL work, or
+     * the one of -Dprism.gl.device.
      */
     private void openDisplay() {
         String forced = System.getProperty("prism.gl.device");
@@ -380,6 +372,20 @@ final class GLDevice {
                 reasons.append(node).append(": no EGL display; ");
                 continue;
             }
+            // Software rasterizers such as llvmpipe only have slow configs,
+            // and Prism sw is faster than them
+            MemorySegment attribs = arena.allocateFrom(JAVA_INT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+                    EGL_CONFIG_CAVEAT, EGL_NONE, EGL_NONE);
+            MemorySegment configs = arena.allocate(ADDRESS);
+            MemorySegment count = arena.allocate(JAVA_INT);
+            if (EGL.eglChooseConfig(d, attribs, configs, 1, count) == 0 || count.get(JAVA_INT, 0) < 1) {
+                EGL.eglTerminate(d);
+                GBM.gbm_device_destroy(g);
+                LibC.close(fd);
+                reasons.append(node).append(": no hardware OpenGL configuration; ");
+                continue;
+            }
+            config = configs.get(ADDRESS, 0);
             drmFd = fd;
             gbm = g;
             display = d;

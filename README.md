@@ -132,7 +132,8 @@ from Maven Central, or an SDK built from source. It was tested with JavaFX
 - For the `gl` pipeline (`-Dprism.order=gl`): EGL 1.5 with the GBM platform,
   `EGL_KHR_surfaceless_context` and `EGL_EXT_image_dma_buf_import`, and an
   OpenGL 4.5 core driver with `GL_OES_EGL_image`, on a render node
-  (`/dev/dri/renderD128` and the next ones, or `-Dprism.gl.device=PATH`). It
+  (`/dev/dri/renderD128` and the next ones with a configuration without
+  `EGL_CONFIG_CAVEAT`, or `-Dprism.gl.device=PATH`). It
   renders with an upper-left origin and a [0, 1] depth range
   (`glClipControl`), as Vulkan does, so both pipelines share their shaders,
   projections and exported frames: linear ARGB8888 buffers of the render
@@ -149,7 +150,8 @@ These requirements are checked when JavaFX starts:
   `GDK_BACKEND` selects another backend).
 - The pipelines are tried in the order of `prism.order`, `vk,gl,sw` by
   default: Vulkan, then OpenGL when Vulkan cannot be used, and the software
-  pipeline when neither can. The `vk` pipeline prints why Vulkan cannot be
+  pipeline when neither can. Software rasterizers (lavapipe, llvmpipe) are
+  not used: they are slower than the software pipeline. The `vk` pipeline prints why Vulkan cannot be
   used (no loader, no Vulkan 1.3 device, no `VK_KHR_push_descriptor`, ...),
   and the `gl` pipeline does the same for EGL and OpenGL.
   `-Dprism.verbose=true` shows the devices and the extensions in use.
@@ -231,8 +233,6 @@ be removed.
   computed in the background, geometric fractals and a Menger sponge),
   Fireworks, Disco and Aurora. `-Deyecandy.show=fractals` starts on one;
 - `tests`, the tests of the platform integration (see [Tests](#tests)).
-
-`Wallpaper.java` is the animated desktop of `launcher.sh` under KWin.
 
 ```
 ./launcher.sh
@@ -345,7 +345,7 @@ the plugin is built first with `./gradlew jar`.
 | `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |
 | `--toolbox=NAME`             | Toolbox container with GNOME 51 (`jfx-gnome51`), or `none` for the GNOME Shell of the host |
 | `--toolbox-release=N`        | Fedora release of a new toolbox container (`45`)               |
-| `--wallpaper=FILE`           | gnome: desktop image; kwin: `javafx` for `Wallpaper.java`      |
+| `--wallpaper=FILE`           | gnome: desktop image (the host wallpaper)                      |
 | `--size=WxH`, `--scale=N`    | gnome, kwin: size of the nested output (2400x1440); kwin: its scale |
 | `--monitors=WxH@S,...`       | gnome: monitors side by side, with their scales, each in a window of its own without `--headless` (`SIZE@1`; `tests` with `--headless`: `SIZE@1,1280x800@2`) |
 | `--headless`                 | gnome: no window on the desktop, virtual monitors instead; the host focus does not matter |

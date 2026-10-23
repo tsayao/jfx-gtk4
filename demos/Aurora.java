@@ -239,6 +239,9 @@ public class Aurora implements EyeCandyDemo.Candy {
         .root.light .text-area .content { -fx-background-color: rgba(255,255,255,0.6); }
         .table-view .column-header-background, .table-view .column-header { -fx-background-color: transparent; }
         .table-row-cell, .list-cell, .tree-cell { -fx-background-color: transparent; -fx-text-fill: -aurora-text; }
+        /* The list of a combo box pops up over the page: opaque */
+        .combo-box-popup > .list-view { -fx-background-color: #161a26; -fx-background-radius: 8; }
+        .root.light .combo-box-popup > .list-view { -fx-background-color: #f6f7fb; }
         .table-row-cell:selected, .list-cell:selected, .tree-cell:selected {
             -fx-background-color: rgba(56,189,248,0.25);
         }

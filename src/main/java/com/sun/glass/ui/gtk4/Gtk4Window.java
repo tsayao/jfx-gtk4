@@ -33,7 +33,9 @@ import com.sun.glass.ui.Window;
 import com.sun.glass.ui.gtk4.wrappers.GObject;
 import com.sun.glass.ui.gtk4.wrappers.GdkAppLaunchContext;
 import com.sun.glass.ui.gtk4.wrappers.GLib;
+import com.sun.glass.ui.gtk4.wrappers.GListModel;
 import com.sun.glass.ui.gtk4.wrappers.GdkDisplay;
+import com.sun.glass.ui.gtk4.wrappers.GdkMonitor;
 import com.sun.glass.ui.gtk4.wrappers.Gdk;
 import com.sun.glass.ui.gtk4.wrappers.GdkCursor;
 import com.sun.glass.ui.gtk4.wrappers.GdkDevice;
@@ -162,6 +164,12 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
     private int frameY;
     private String testTag;
     private Integer requestedX;
+    // The last position the application asked for, which chooses the monitor
+    // of full screen: Wayland ignores the position itself
+    private Integer preferredX;
+    private Integer preferredY;
+    // The position 0,0 reported to Glass, which comes back as a request
+    private boolean originEchoPending;
     private Integer requestedY;
     private boolean testActivated;
     private boolean activatedSinceMap;
@@ -702,6 +710,19 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         }
     }
 
+    /**
+     * The popover of the first popup of this window that shows, which comes
+     * after the nodes of the window in the accessible tree.
+     */
+    MemorySegment firstShownPopover() {
+        for (Gtk4Window w : windowMap.values()) {
+            if (w.owner == this && w.isPopup() && w.popover != null && w.popover.getVisible()) {
+                return w.popover.getPointer();
+            }
+        }
+        return null;
+    }
+
     private static boolean isAnyWindowActive() {
         for (Gtk4Window w : windowMap.values()) {
             if (w.gtkWindow != null && w.gtkWindow.isActive()) {
@@ -1113,6 +1134,14 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         if (gtkWindow == null) {
             return;
         }
+        boolean echo = originEchoPending && x == 0 && y == 0;
+        originEchoPending = false;
+        if (xSet && !echo) {
+            preferredX = x;
+        }
+        if (ySet && !echo) {
+            preferredY = y;
+        }
 
         if ((xSet || ySet) && Gtk4TestSession.isEnabled()) {
             positionRequested = true;
@@ -1126,6 +1155,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             }
         } else if (xSet || ySet) {
             // Wayland clients cannot position their toplevels
+            originEchoPending = x != 0 || y != 0;
             notifyMove(0, 0);
         }
 
@@ -1335,6 +1365,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             if (visible) {
                 positionPopover();
                 popover.popup();
+                Gtk4Accessible.windowShown(this);
             } else if (Gtk4View.isDispatchingPress()) {
                 GtkPopover hidden = popover;
                 Application.invokeLater(() -> {
@@ -1457,7 +1488,43 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         restorePending |= !floatingShown;
         applyResizableContentSize();
         gtkWindow.setResizable(true);
-        gtkWindow.fullscreen();
+        GdkMonitor monitor = preferredMonitor();
+        if (monitor != null) {
+            Gtk4Log.log(STATE, "enterFullscreen: on the monitor at %d,%d", preferredX, preferredY);
+            gtkWindow.fullscreenOnMonitor(monitor);
+            monitor.unref();
+        } else {
+            gtkWindow.fullscreen();
+        }
+    }
+
+    /**
+     * The monitor that contains the middle of the window at the position the
+     * application asked for, or null when it asked for none.
+     */
+    private GdkMonitor preferredMonitor() {
+        if (preferredX == null || preferredY == null) {
+            return null;
+        }
+        GdkDisplay display = GdkDisplay.getDefault();
+        if (display.isNull()) {
+            return null;
+        }
+        int cx = preferredX + Math.max(windowWidth, 0) / 2;
+        int cy = preferredY + Math.max(windowHeight, 0) / 2;
+        GListModel monitors = display.getMonitors();
+        GdkRectangle g = new GdkRectangle(0, 0, 0, 0);
+        GdkMonitor found = null;
+        for (int i = 0; i < monitors.getNItems() && found == null; i++) {
+            GdkMonitor m = monitors.getObject(i).cast(GdkMonitor::new);
+            m.getGeometry(g);
+            if (cx >= g.x() && cx < g.x() + g.width() && cy >= g.y() && cy < g.y() + g.height()) {
+                found = m;
+            } else {
+                m.unref();
+            }
+        }
+        return found;
     }
 
     void exitFullscreen() {

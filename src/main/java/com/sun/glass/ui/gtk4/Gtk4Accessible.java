@@ -101,6 +101,10 @@ final class Gtk4Accessible extends Accessible {
     private static final Map<Long, Gtk4Window> HOSTS = new HashMap<>();
     private static final AtomicLong IDS = new AtomicLong(1);
     private static Gtk4Accessible focusOwner;
+    // The node that has the focus, whose focus item can change without a notification of it
+    private static Node focusNode;
+    private String lastSpinnerText;
+    private int spinnerChanges;
 
     private final long id = IDS.getAndIncrement();
     private MemorySegment peer;
@@ -129,6 +133,26 @@ final class Gtk4Accessible extends Accessible {
             Gtk4Log.log(LOG, "Cannot create the accessible host: %s", t);
             return null;
         }
+    }
+
+    /**
+     * Makes the accessible of the scene of a window that shows, such as a
+     * popup menu, while an assistive technology reads the application: its
+     * scene notifies the focus only once it has one.
+     */
+    static void windowShown(Gtk4Window window) {
+        if (Native.INSTANCE == null || ACCESSIBLES.isEmpty()) {
+            return;
+        }
+        window.getCurrentView().ifPresent(view -> {
+            View.EventHandler handler = view.getEventHandler();
+            // A popup whose scene has no focused node, such as the list of a combo
+            // box, leaves the focus to its owner
+            if (handler != null && handler.getSceneAccessible() instanceof Gtk4Accessible acc
+                    && acc.getAttribute(FOCUS_NODE) != null) {
+                acc.sendNotification(FOCUS_NODE);
+            }
+        });
     }
 
     static void removeHost(GtkWidget host) {
@@ -189,6 +213,7 @@ final class Gtk4Accessible extends Accessible {
                     }
                     return;
                 }
+                focusNode = node;
                 setFocusOwner(focusTarget(node));
             }
             case FOCUS_ITEM -> {
@@ -196,9 +221,17 @@ final class Gtk4Accessible extends Accessible {
                 if (focusOwner == this || (focusOwner != null && isAncestorOf(focusOwner))) {
                     Gtk4Accessible acc = item != null ? accessibleOf(item) : null;
                     setFocusOwner(acc != null ? acc : this);
+                } else {
+                    // The list of a combo box notifies its focused item, which the combo box,
+                    // which has the focus, reports as its own while its popup shows
+                    refocus();
                 }
             }
-            case TEXT -> {
+            case EXPANDED -> {
+                pushAll();
+                refocus();
+            }
+            case TEXT, VALUE_STRING -> {
                 updateTextContents();
                 pushAll();
             }
@@ -222,7 +255,8 @@ final class Gtk4Accessible extends Accessible {
             }
             try {
                 AccessibleRole role = role();
-                GSubclass type = isTextRole(role) ? n.text : isRangeRole(role) ? n.range : n.base;
+                GSubclass type = role == AccessibleRole.SPINNER ? n.textRange
+                        : isTextRole(role) ? n.text : isRangeRole(role) ? n.range : n.base;
                 MemorySegment obj = type.create().getPointer();
                 type.setKey(obj, id);
                 peer = obj;
@@ -338,10 +372,15 @@ final class Gtk4Accessible extends Accessible {
 
     private MemorySegment hostWidget() {
         Gtk4Accessible scene = sceneAccessible();
-        View view = scene != null ? scene.getView() : null;
+        if (scene == null) {
+            return null;
+        }
+        // The glass gets the accessible of a scene from its event handler, which
+        // does not give it the view
         for (Map.Entry<Long, Gtk4Window> e : HOSTS.entrySet()) {
             Gtk4View current = e.getValue().getCurrentView().orElse(null);
-            if (current != null && current == view) {
+            View.EventHandler handler = current != null ? current.getEventHandler() : null;
+            if (handler != null && handler.getSceneAccessible() == scene) {
                 return MemorySegment.ofAddress(e.getKey());
             }
         }
@@ -365,6 +404,20 @@ final class Gtk4Accessible extends Accessible {
         Node item = (Node) acc.getAttribute(FOCUS_ITEM);
         Gtk4Accessible itemAcc = item != null ? accessibleOf(item) : null;
         return itemAcc != null ? itemAcc : acc;
+    }
+
+    /**
+     * Moves the focus to the current focus item of the focused node, such as
+     * the item of the popup list of a combo box.
+     */
+    private void refocus() {
+        if (focusNode == null) {
+            return;
+        }
+        Gtk4Accessible target = focusTarget(focusNode);
+        if (target != null && target != focusOwner) {
+            setFocusOwner(target);
+        }
     }
 
     private static void setFocusOwner(Gtk4Accessible acc) {
@@ -581,7 +634,13 @@ final class Gtk4Accessible extends Accessible {
                     pushState(n, Gtk.ACCESSIBLE_STATE_BUSY, Boolean.TRUE.equals(getAttribute(INDETERMINATE)) ? 1 : 0);
                 }
             }
-            case SPINNER -> pushString(n, Gtk.ACCESSIBLE_PROPERTY_VALUE_TEXT, (String) getAttribute(VALUE_STRING));
+            case SPINNER -> {
+                String value = (String) getAttribute(VALUE_STRING);
+                pushString(n, Gtk.ACCESSIBLE_PROPERTY_VALUE_TEXT, value);
+                // AT-SPI tells the change of a value by its number: a text that is not a
+                // number gets one that changes with it
+                pushDouble(n, Gtk.ACCESSIBLE_PROPERTY_VALUE_NOW, spinnerNumber(value));
+            }
             case TEXT_FIELD, TEXT_AREA, PASSWORD_FIELD -> {
                 pushInt(n, Gtk.ACCESSIBLE_PROPERTY_READ_ONLY, Boolean.FALSE.equals(getAttribute(EDITABLE)) ? 1 : 0);
                 pushInt(n, Gtk.ACCESSIBLE_PROPERTY_MULTI_LINE, role == AccessibleRole.TEXT_AREA ? 1 : 0);
@@ -609,6 +668,21 @@ final class Gtk4Accessible extends Accessible {
                 pushInt(n, Gtk.ACCESSIBLE_PROPERTY_LEVEL, l + 1);
             }
         }
+    }
+
+    private double spinnerNumber(String value) {
+        if (value != null) {
+            try {
+                return Double.parseDouble(value.trim().replace(',', '.'));
+            } catch (NumberFormatException e) {
+                // Not a number
+            }
+        }
+        if (!Objects.equals(value, lastSpinnerText)) {
+            lastSpinnerText = value;
+            spinnerChanges++;
+        }
+        return spinnerChanges;
     }
 
     private void pushRange(Native n) {
@@ -666,7 +740,8 @@ final class Gtk4Accessible extends Accessible {
     // Text
 
     private String currentText() {
-        Object t = getAttribute(TEXT);
+        // The text of a spinner is the accessible text of the control, its value is the text read
+        Object t = getAttribute(role() == AccessibleRole.SPINNER ? VALUE_STRING : TEXT);
         return t instanceof String s ? s : "";
     }
 
@@ -943,7 +1018,22 @@ final class Gtk4Accessible extends Accessible {
             }
             List<Gtk4Accessible> siblings = acc.siblings();
             int index = siblings.indexOf(acc);
-            return index >= 0 && index + 1 < siblings.size() ? ref(siblings.get(index + 1)) : MemorySegment.NULL;
+            if (index >= 0 && index + 1 < siblings.size()) {
+                return ref(siblings.get(index + 1));
+            }
+            // After the nodes of a window come its popups (menus, the lists of the combo
+            // boxes), whose popovers are children of its host
+            Gtk4Accessible parent = acc.accessibleParent();
+            if (index >= 0 && (parent == null || parent.isSceneAccessible())) {
+                Gtk4Accessible scene = parent != null ? parent : acc.sceneAccessible();
+                MemorySegment host = scene != null ? scene.hostWidget() : null;
+                Gtk4Window window = host != null ? HOSTS.get(host.address()) : null;
+                MemorySegment popover = window != null ? window.firstShownPopover() : null;
+                if (popover != null) {
+                    return Native.INSTANCE.ref(popover);
+                }
+            }
+            return MemorySegment.NULL;
         } catch (Throwable t) {
             Gtk4Log.log(LOG, "getNextSibling: %s", t);
             return MemorySegment.NULL;
@@ -1242,6 +1332,8 @@ final class Gtk4Accessible extends Accessible {
         final GSubclass base;
         final GSubclass range;
         final GSubclass text;
+        // A spin button: a text, its value, and a range for the Value interface of AT-SPI
+        final GSubclass textRange;
         final GSubclass host;
         MemorySegment hostParentFirstChild = MemorySegment.NULL;
 
@@ -1290,6 +1382,11 @@ final class Gtk4Accessible extends Accessible {
             text = GSubclass.register(GObject.getGType(), "GlassGtk4AccessibleText", classInitStub);
             text.addInterface(accessibleType, accessibleInitStub);
             text.addInterface(GtkAccessibleText.getGType(), textInitStub);
+
+            textRange = GSubclass.register(GObject.getGType(), "GlassGtk4AccessibleTextRange", classInitStub);
+            textRange.addInterface(accessibleType, accessibleInitStub);
+            textRange.addInterface(GtkAccessibleText.getGType(), textInitStub);
+            textRange.addInterface(GtkAccessibleRange.getGType(), rangeInitStub);
 
             host = GSubclass.register(GtkBox.getGType(), "GlassGtk4AccessibleHost", null);
             host.addInterface(accessibleType, hostInitStub);

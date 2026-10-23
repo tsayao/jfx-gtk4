@@ -306,7 +306,8 @@ final class VKDevice {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 4;
             case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 3;
             case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 2;
-            case VK_PHYSICAL_DEVICE_TYPE_CPU -> 0;
+            // Software rasterizers such as lavapipe are slower than Prism sw
+            case VK_PHYSICAL_DEVICE_TYPE_CPU -> -1;
             default -> 1;
         };
     }
@@ -346,7 +347,7 @@ final class VKDevice {
                 }
             }
             if (best < 0) {
-                return fail("no Vulkan 1.3 device");
+                return fail("no Vulkan 1.3 hardware device");
             }
             physicalDevice = devices.getAtIndex(JAVA_LONG, best);
             vkGetPhysicalDeviceProperties(physicalDevice, properties);

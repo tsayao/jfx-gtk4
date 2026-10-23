@@ -686,6 +686,16 @@ public class AccessibilityLab {
                 flags = ','.join(n for n, s in STATES if states.contains(s))
                 print('%d\\t%s\\t%s\\t%s' % (depth, a.get_role_name(), (a.get_name() or '').replace('\\n', ' '), flags))
                 return False
+            def focused(a, depth):
+                if a.get_state_set().contains(Atspi.StateType.FOCUSED) and depth > 0:
+                    text = ''
+                    if a.get_text_iface() is not None:
+                        text = Atspi.Text.get_text(a, 0, -1)
+                    value = a.get_value_iface()
+                    print('%s\t%s\t%s\t%s' % (a.get_role_name(), a.get_name() or '', text,
+                                               value.get_current_value() if value is not None else ''))
+                    return True
+                return False
             def act(a, depth):
                 if a.get_role_name() == sys.argv[3] and a.get_name() == sys.argv[4]:
                     action = a.get_action_iface()
@@ -699,7 +709,8 @@ public class AccessibilityLab {
             for i in range(desktop.get_child_count()):
                 app = desktop.get_child_at_index(i)
                 if app is not None and app.get_process_id() == pid:
-                    if not walk(app, 0, dump if command == 'dump' else act):
+                    visit = dump if command == 'dump' else focused if command == 'focused' else act
+                    if not walk(app, 0, visit):
                         print('missing' if command != 'dump' else '')
                     break
             else:
@@ -878,6 +889,63 @@ public class AccessibilityLab {
             TestKit.shortcut(KeyCode.ESCAPE);
             await("the View menu closed", () -> !viewMenu.isShowing());
             return "shown and closed";
+        });
+        suite.robot("Combo box value", "Down changes the value of the combo box, which AT-SPI reads as its text",
+                () -> {
+                    TestKit.click(country);
+                    TestKit.shortcut(KeyCode.ESCAPE);
+                    String before = fx(() -> country.getValue());
+                    TestKit.shortcut(KeyCode.DOWN);
+                    String after = fx(() -> country.getValue());
+                    TestKit.check(!after.equals(before), "Down left the value at " + before);
+                    awaitAtspi("the new value in the text of the combo box",
+                            () -> atspi("focused").startsWith("combo box\t") && atspi("focused").contains("\t" + after + "\t"));
+                    return before + " → " + after;
+                });
+        suite.robot("Combo box list", "The focus moves to the items of the list that the combo box opens",
+                () -> {
+                    TestKit.click(nameField);
+                    fx(() -> country.requestFocus());
+                    TestKit.shortcut(KeyCode.DOWN, KeyCode.ALT);
+                    await("the list", () -> country.isShowing());
+                    try {
+                        TestKit.shortcut(KeyCode.DOWN);
+                        String item = fx(() -> ((javafx.scene.control.skin.ComboBoxListViewSkin<?>) country.getSkin())
+                                .getPopupContent() instanceof javafx.scene.control.ListView<?> l
+                                && l.getFocusModel().getFocusedItem() != null ? l.getFocusModel().getFocusedItem().toString() : "");
+                        awaitAtspi("the focused list item " + item, () -> atspi("focused").startsWith("list item\t" + item + "\t"));
+                        return "list item \"" + item + "\"";
+                    } finally {
+                        TestKit.shortcut(KeyCode.ESCAPE);
+                        await("the list closed", () -> !country.isShowing());
+                    }
+                });
+        suite.robot("Spinner value", "Up increments the spinner, whose AT-SPI value and text follow", () -> {
+            TestKit.click(age.getEditor());
+            int before = fx(() -> age.getValue());
+            TestKit.shortcut(KeyCode.UP);
+            await("the incremented value", () -> age.getValue() == before + 1);
+            int now = before + 1;
+            awaitAtspi("the AT-SPI value " + now, () -> {
+                String[] f = atspi("focused").strip().split("\t", -1);
+                return f.length >= 4 && f[0].equals("spin button") && f[2].equals(String.valueOf(now))
+                        && Double.parseDouble(f[3]) == now;
+            });
+            fx(() -> age.getValueFactory().setValue(before));
+            return before + " → " + now;
+        });
+        suite.robot("Menu items", "The focus moves to the items of the View menu with Down", () -> {
+            TestKit.click(nameField);
+            TestKit.shortcut(KeyCode.V, KeyCode.ALT);
+            await("the View menu", () -> viewMenu.isShowing());
+            try {
+                TestKit.shortcut(KeyCode.DOWN);
+                awaitAtspi("a focused menu item", () -> atspi("focused").matches("(?s)(check |radio )?menu item\t.+"));
+                return atspi("focused").split("\t")[0] + " \"" + atspi("focused").split("\t")[1] + "\"";
+            } finally {
+                TestKit.shortcut(KeyCode.ESCAPE);
+                await("the View menu closed", () -> !viewMenu.isShowing());
+            }
         });
         suite.robot("Offsets under the pointer", "Points at the biography and checks the inspector", () -> {
             TestKit.reveal(bio);

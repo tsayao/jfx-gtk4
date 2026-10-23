@@ -31,8 +31,7 @@
 #          GNOME than the one of the host can be used. The desktop shows the
 #          wallpaper of the host. When the container does not exist, the
 #          launcher asks before creating it.
-#   kwin   KWin over the Plasma desktop, or over an animated JavaFX wallpaper
-#          when plasmashell is not installed.
+#   kwin   KWin over the Plasma desktop, when plasmashell is installed.
 #
 # A nested compositor runs on a private D-Bus session with its own settings,
 # so it leaves the running desktop untouched, and is closed when the last demo
@@ -57,7 +56,6 @@
 #                           "none" to use the GNOME Shell of the host
 #   --toolbox-release=N     Fedora release of a new toolbox container (45)
 #   --wallpaper=FILE        gnome: image of the desktop (the host wallpaper)
-#                           kwin: "javafx" for the JavaFX wallpaper
 #   --size=WxH              gnome, kwin: size of the nested output (2400x1440)
 #   --scale=N               kwin: output scale (1)
 #   --monitors=WxH@S,...    gnome: monitors of the nested shell, side by side,
@@ -248,6 +246,14 @@ fi
 LOGS=${TMPDIR:-/tmp}/jfx-wayland-launcher-$COMPOSITOR
 [ "$COMPOSITOR" = gnome ] && LOGS=$LOGS-$TOOLBOX
 mkdir -p "$LOGS"
+
+# The demos run with a copy of the plugin, which a build can then replace
+if [ -f "$ROOT/build/libs/jfx-wayland.jar" ] && [ -f "$RUN_ARGS" ] && [ -z "$LAUNCHER_JAR" ]; then
+    export LAUNCHER_JAR=$LOGS/jfx-wayland.jar
+    cp "$ROOT/build/libs/jfx-wayland.jar" "$LAUNCHER_JAR"
+    sed "s|\"build/libs/jfx-wayland.jar\"|\"$LAUNCHER_JAR\"|" "$RUN_ARGS" > "$LOGS/run.args"
+fi
+[ -n "$LAUNCHER_JAR" ] && RUN_ARGS=$LOGS/run.args
 
 if [ "$COMPOSITOR" != none ] && [ -z "$LAUNCHER_SESSION" ]; then
     export LAUNCHER_SESSION=1
@@ -462,12 +468,10 @@ start_kwin() {
     wait_for_socket
 
     export WAYLAND_DISPLAY=$SOCKET
-    if [ "$WALLPAPER" != javafx ] && command -v plasmashell > /dev/null; then
+    if command -v plasmashell > /dev/null; then
         (kde plasmashell --no-respawn) > "$LOGS/plasma.log" 2>&1 &
-    else
-        (run "$DEMOS/Wallpaper.java") > "$LOGS/wallpaper.log" 2>&1 &
+        CHILDREN="$CHILDREN $!"
     fi
-    CHILDREN="$CHILDREN $!"
     sleep 3
     if [ -n "$SCREENSHOT" ]; then
         echo "--screenshot is only supported with --compositor=gnome" >&2
