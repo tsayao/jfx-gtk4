@@ -35,12 +35,14 @@ import javafx.scene.effect.Glow;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.HeaderBar;
 import javafx.scene.layout.HeaderDragType;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.RowConstraints;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -60,14 +62,17 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The tests of the robot, windows, dialogs, drag and drop, clipboard, 3D,
- * Swing, touch and accessibility labs in one window, a tab per lab, with a button that runs them all, one
- * lab after the other, and an overview of their OK, FAIL and SKIP results.
- * The robot tests need the GNOME test session:
- * <pre>./launcher.sh --apps=tests --compositor=gnome</pre>
+ * The tests of the robot, windows, screens, stage, dialogs, drag and drop,
+ * clipboard, render, 3D, Swing, touch and accessibility labs in one window, a
+ * tab per lab, with a button that runs them all, one lab after the other, and
+ * an overview of their OK, FAIL and SKIP results.
+ * The robot tests take over the pointer and the keyboard of the desktop, which
+ * asks once for the permission, unless they run in the nested GNOME Shell of
+ * the launcher, here without a window:
+ * <pre>./launcher.sh --apps=tests --compositor=gnome --headless</pre>
  * With -Dtests.run=true the tests run at startup, and with -Dtests.exit=true
  * the application then exits, with status 1 when a test failed:
- * <pre>./launcher.sh --apps=tests --compositor=gnome -- -Dtests.run=true -Dtests.exit=true</pre>
+ * <pre>./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true</pre>
  */
 public class TestsDemo extends Application {
 
@@ -149,31 +154,37 @@ public class TestsDemo extends Application {
     @Override
     public void start(Stage stage) {
         // The reader of the cross-process clipboard check starts this application again
-        if (ClipboardDemo.isReader(getParameters().getUnnamed())) {
-            new ClipboardDemo().startReader(stage);
+        if (ClipboardLab.isReader(getParameters().getUnnamed())) {
+            new ClipboardLab().startReader(stage);
             return;
         }
         this.stage = stage;
         stage.initStyle(StageStyle.EXTENDED);
 
-        RobotDemo robot = new RobotDemo();
-        addLab("Robot", robot.content(stage), RobotDemo.STYLESHEET, robot.suite);
-        WindowsDemo windows = new WindowsDemo();
-        addLab("Windows", windows.content(stage), WindowsDemo.STYLESHEET, windows.suite);
-        DialogsDemo dialogs = new DialogsDemo();
-        addLab("Dialogs", dialogs.content(stage), DialogsDemo.STYLESHEET, dialogs.suite);
-        DragDropDemo dragDrop = new DragDropDemo();
-        addLab("Drag and drop", dragDrop.content(stage), DragDropDemo.STYLESHEET, dragDrop.suite);
-        ClipboardDemo clipboard = new ClipboardDemo();
-        addLab("Clipboard", clipboard.content(stage), ClipboardDemo.STYLESHEET, clipboard.suite);
-        Scene3DDemo scene3d = new Scene3DDemo();
-        addLab("3D", scene3d.content(stage), Scene3DDemo.STYLESHEET, scene3d.suite);
-        SwingDemo swing = new SwingDemo();
-        addLab("Swing", swing.content(stage), SwingDemo.STYLESHEET, swing.suite);
-        TouchDemo touch = new TouchDemo();
-        addLab("Touch", touch.content(stage), TouchDemo.STYLESHEET, touch.suite);
-        AccessibilityDemo accessibility = new AccessibilityDemo();
-        addLab("Accessibility", accessibility.content(stage), AccessibilityDemo.STYLESHEET, accessibility.suite);
+        RobotLab robot = new RobotLab();
+        addLab("Robot", robot.content(stage), RobotLab.STYLESHEET, robot.suite);
+        WindowsLab windows = new WindowsLab();
+        addLab("Windows", windows.content(stage), WindowsLab.STYLESHEET, windows.suite);
+        ScreensLab screens = new ScreensLab();
+        addLab("Screens", screens.content(stage), ScreensLab.STYLESHEET, screens.suite);
+        StageLab stageLab = new StageLab();
+        addLab("Stage", stageLab.content(stage), StageLab.STYLESHEET, stageLab.suite);
+        DialogsLab dialogs = new DialogsLab();
+        addLab("Dialogs", dialogs.content(stage), DialogsLab.STYLESHEET, dialogs.suite);
+        DragDropLab dragDrop = new DragDropLab();
+        addLab("Drag and drop", dragDrop.content(stage), DragDropLab.STYLESHEET, dragDrop.suite);
+        ClipboardLab clipboard = new ClipboardLab();
+        addLab("Clipboard", clipboard.content(stage), ClipboardLab.STYLESHEET, clipboard.suite);
+        Scene3DLab scene3d = new Scene3DLab();
+        RenderLab render = new RenderLab();
+        addLab("Render", render.content(stage), render.stylesheet(), render.suite);
+        addLab("3D", scene3d.content(stage), Scene3DLab.STYLESHEET, scene3d.suite);
+        SwingLab swing = new SwingLab();
+        addLab("Swing", swing.content(stage), SwingLab.STYLESHEET, swing.suite);
+        TouchLab touch = new TouchLab();
+        addLab("Touch", touch.content(stage), TouchLab.STYLESHEET, touch.suite);
+        AccessibilityLab accessibility = new AccessibilityLab();
+        addLab("Accessibility", accessibility.content(stage), AccessibilityLab.STYLESHEET, accessibility.suite);
 
         Tab overview = new Tab("Overview", overview());
         tabs.getTabs().addFirst(overview);
@@ -232,7 +243,7 @@ public class TestsDemo extends Application {
         logo.setEffect(new Glow(0.6));
         Label brand = new Label("Test Lab");
         brand.getStyleClass().add("brand");
-        Label sub = new Label("robot · windows · dialogs · drag and drop · clipboard · 3D · Swing · touch · accessibility");
+        Label sub = new Label("robot · windows · screens · stages · dialogs · drag and drop · clipboard · rendering · 3D · Swing · touch · accessibility");
         sub.getStyleClass().add("muted");
         HBox left = new HBox(10, logo, brand, sub);
         left.setAlignment(Pos.CENTER_LEFT);
@@ -242,8 +253,9 @@ public class TestsDemo extends Application {
         runAll.getStyleClass().add("test-run");
         runAll.disableProperty().bind(TestKit.busyProperty());
         runAll.setOnAction(e -> run(labs));
+        Button stop = TestKit.stopButton(new Button("Stop"));
         total.getStyleClass().add("test-summary");
-        HBox right = new HBox(10, total, runAll,
+        HBox right = new HBox(10, total, runAll, stop,
                 pill(TestKit.robotInput() ? "Robot input" : "No robot input"),
                 pill(System.getProperty("glass.platform", "default") + " glass"));
         right.setAlignment(Pos.CENTER_RIGHT);
@@ -265,8 +277,23 @@ public class TestsDemo extends Application {
     }
 
     private Node overview() {
-        FlowPane cards = new FlowPane(14, 14);
+        // The labs in a grid that fills the tab, each list scrolling in its card
+        GridPane cards = new GridPane(14, 14);
         cards.setPadding(new Insets(4, 18, 18, 18));
+        cards.setMinHeight(0);
+        int perRow = Math.max(1, Math.min(3, labs.size()));
+        int rows = (labs.size() + perRow - 1) / perRow;
+        for (int i = 0; i < perRow; i++) {
+            ColumnConstraints c = new ColumnConstraints();
+            c.setPercentWidth(100.0 / perRow);
+            cards.getColumnConstraints().add(c);
+        }
+        for (int i = 0; i < rows; i++) {
+            RowConstraints r = new RowConstraints();
+            r.setPercentHeight(100.0 / rows);
+            cards.getRowConstraints().add(r);
+        }
+        int index = 0;
         for (Lab lab : labs) {
             Label title = new Label(lab.name().toUpperCase(Locale.ROOT));
             title.getStyleClass().add("section");
@@ -279,22 +306,32 @@ public class TestsDemo extends Application {
             HBox.setHgrow(spacer, Priority.ALWAYS);
             HBox top = new HBox(10, title, spacer, open, run);
             top.setAlignment(Pos.CENTER_LEFT);
-            VBox card = new VBox(10, top, lab.suite().summaryLabel(), lab.suite().compactView());
+            ScrollPane list = new ScrollPane(lab.suite().compactView());
+            list.getStyleClass().add("test-list");
+            list.getStylesheets().add(TestKit.STYLESHEET);
+            list.setFitToWidth(true);
+            list.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+            list.setMinHeight(0);
+            VBox.setVgrow(list, Priority.ALWAYS);
+            VBox card = new VBox(10, top, lab.suite().summaryLabel(), list);
             card.getStyleClass().add("glass");
-            card.setPrefWidth(660);
-            cards.getChildren().add(card);
+            card.setMinSize(0, 0);
+            cards.add(card, index % perRow, index / perRow);
+            index++;
         }
         Label hint = new Label("Run all labs runs the tests of each lab in its tab, one lab after the other. "
-                + "Robot tests need the GNOME test session (./launcher.sh --apps=tests --compositor=gnome) and "
-                + "are skipped elsewhere; manual tests, such as the touch screen ones, pass when the lab sees "
+                + "Robot tests take over the pointer and the keyboard of this desktop, which asks once for the "
+                + "permission (-Dtests.robot=false skips them; ./launcher.sh --apps=tests --compositor=gnome "
+                + "--headless runs them apart); manual tests, such as the touch screen ones, pass when the lab sees "
                 + "their events and are skipped until then. Do not use the mouse or the keyboard during a run.");
         hint.getStyleClass().add("muted");
         hint.setWrapText(true);
+        hint.setMinHeight(Region.USE_PREF_SIZE);
         VBox.setMargin(hint, new Insets(0, 18, 0, 18));
-        ScrollPane scroll = new ScrollPane(new VBox(10, hint, cards));
-        scroll.setFitToWidth(true);
-        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        return scroll;
+        VBox.setVgrow(cards, Priority.ALWAYS);
+        VBox page = new VBox(10, hint, cards);
+        page.setMinHeight(0);
+        return page;
     }
 
     /**
@@ -308,16 +345,24 @@ public class TestsDemo extends Application {
         Thread.ofPlatform().daemon().name("tests").start(() -> {
             TestKit.Result result = TestKit.Result.NONE;
             long start = System.nanoTime();
+            boolean stopped = false;
             try {
                 for (Lab lab : selected) {
                     TestKit.fx(() -> tabs.getSelectionModel().select(lab.tab()));
                     TestKit.pause(800);
                     result = result.plus(lab.suite().run(lab.suite().tests));
+                    if (TestKit.isStopping()) {
+                        break;
+                    }
                 }
+            } catch (TestKit.Stopped e) {
+                // Stopped before a lab started
             } finally {
+                stopped = TestKit.isStopping();
                 TestKit.unlock();
             }
-            String text = result + " in " + (System.nanoTime() - start) / 1_000_000 / 1000 + " s";
+            String text = (stopped ? "Stopped: " : "") + result + " in "
+                    + (System.nanoTime() - start) / 1_000_000 / 1000 + " s";
             System.out.println("[All] " + text);
             boolean failed = result.fail() > 0;
             TestKit.fx(() -> {

@@ -24,6 +24,8 @@ package com.sun.glass.ui.gtk4;
 import com.sun.glass.ui.gtk4.wrappers.Ei;
 
 import java.lang.foreign.MemorySegment;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 final class Gtk4EiInput {
@@ -40,6 +42,11 @@ final class Gtk4EiInput {
     private MemorySegment buttons;
     private MemorySegment scroll;
     private MemorySegment keyboard;
+    // A touch screen, when the compositor offers one
+    private MemorySegment touchscreen;
+    private MemorySegment seat;
+    private boolean touchRequested;
+    private static final long TOUCH_WAIT = 300_000_000L;
     private int sequence;
     private boolean disconnected;
     private MemorySegment pendingPing;
@@ -50,9 +57,10 @@ final class Gtk4EiInput {
 
     static Gtk4EiInput connect() {
         if (!Ei.isAvailable()) {
-            throw new IllegalStateException("The robot requires libei");
+            throw new UnsupportedOperationException("The robot requires libei");
         }
-        int fd = Gtk4TestSession.connectToEis();
+        // The remote desktop session of the test session, or of the portal in any session
+        int fd = Gtk4TestSession.isEnabled() ? Gtk4TestSession.connectToEis() : Gtk4RemoteDesktopPortal.connectToEis();
         MemorySegment ei = Ei.newSender();
         Ei.configureName(ei, "JavaFX Robot");
         int status = Ei.setupBackendFd(ei, fd);
@@ -86,6 +94,82 @@ final class Gtk4EiInput {
         dispatch();
         MemorySegment device = require(scroll, "scroll");
         Ei.deviceScrollDiscrete(device, 0, detents * SCROLL_DETENT);
+        Ei.deviceFrame(device, Ei.now(ei));
+        sync();
+    }
+
+    /**
+     * Whether the compositor offers a touch screen. The capability is bound
+     * on the first call, so that the other input does not change for a robot
+     * that never touches.
+     */
+    boolean hasTouchscreen() {
+        if (!Ei.isTouchAvailable() || seat == null) {
+            return false;
+        }
+        if (!touchRequested) {
+            touchRequested = true;
+            Ei.seatBindCapabilities(seat, Ei.DEVICE_CAP_POINTER_ABSOLUTE, Ei.DEVICE_CAP_BUTTON,
+                    Ei.DEVICE_CAP_SCROLL, Ei.DEVICE_CAP_KEYBOARD, Ei.DEVICE_CAP_TOUCH);
+            long deadline = System.nanoTime() + TOUCH_WAIT;
+            while (touchscreen == null && System.nanoTime() < deadline) {
+                dispatch();
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            Gtk4Log.log(LOG, "robot touch screen: %s", touchscreen != null ? "yes" : "not offered");
+        }
+        return touchscreen != null;
+    }
+
+    private final Map<Integer, MemorySegment> touches = new HashMap<>();
+
+    private MemorySegment requireTouch() {
+        if (!hasTouchscreen()) {
+            throw new UnsupportedOperationException(Ei.isTouchAvailable()
+                    ? "The compositor offers no touch screen to the robot" : "This libei cannot emulate touch screens");
+        }
+        return touchscreen;
+    }
+
+    void touchDown(int id, double x, double y) {
+        dispatch();
+        MemorySegment device = requireTouch();
+        if (touches.containsKey(id)) {
+            throw new IllegalStateException("The touch " + id + " is down already");
+        }
+        MemorySegment touch = Ei.deviceTouchNew(device);
+        touches.put(id, touch);
+        Ei.touchDown(touch, x, y);
+        Ei.deviceFrame(device, Ei.now(ei));
+        sync();
+    }
+
+    void touchMove(int id, double x, double y) {
+        dispatch();
+        MemorySegment device = requireTouch();
+        MemorySegment touch = touches.get(id);
+        if (touch == null) {
+            throw new IllegalStateException("The touch " + id + " is not down");
+        }
+        Ei.touchMotion(touch, x, y);
+        Ei.deviceFrame(device, Ei.now(ei));
+        sync();
+    }
+
+    void touchUp(int id) {
+        dispatch();
+        MemorySegment device = requireTouch();
+        MemorySegment touch = touches.remove(id);
+        if (touch == null) {
+            throw new IllegalStateException("The touch " + id + " is not down");
+        }
+        Ei.touchUp(touch);
+        Ei.touchUnref(touch);
         Ei.deviceFrame(device, Ei.now(ei));
         sync();
     }
@@ -184,9 +268,11 @@ final class Gtk4EiInput {
     private void handle(MemorySegment event) {
         int type = Ei.eventGetType(event);
         switch (type) {
-            case Ei.EVENT_SEAT_ADDED -> Ei.seatBindCapabilities(Ei.eventGetSeat(event),
-                    Ei.DEVICE_CAP_POINTER_ABSOLUTE, Ei.DEVICE_CAP_BUTTON,
-                    Ei.DEVICE_CAP_SCROLL, Ei.DEVICE_CAP_KEYBOARD);
+            case Ei.EVENT_SEAT_ADDED -> {
+                seat = Ei.eventGetSeat(event);
+                Ei.seatBindCapabilities(seat, Ei.DEVICE_CAP_POINTER_ABSOLUTE, Ei.DEVICE_CAP_BUTTON,
+                        Ei.DEVICE_CAP_SCROLL, Ei.DEVICE_CAP_KEYBOARD);
+            }
             case Ei.EVENT_DEVICE_RESUMED -> resumed(Ei.eventGetDevice(event));
             case Ei.EVENT_DEVICE_PAUSED, Ei.EVENT_DEVICE_REMOVED -> removed(Ei.eventGetDevice(event));
             case Ei.EVENT_DISCONNECT -> disconnected = true;
@@ -218,6 +304,11 @@ final class Gtk4EiInput {
             keyboard = device;
             used = true;
         }
+        if (touchscreen == null && Ei.isTouchAvailable() && Ei.deviceHasCapability(device, Ei.DEVICE_CAP_TOUCH)) {
+            touchscreen = device;
+            used = true;
+            Gtk4Log.log(LOG, "robot touch screen available");
+        }
         if (used) {
             Ei.deviceRef(device);
             Ei.deviceStartEmulating(device, ++sequence);
@@ -240,6 +331,10 @@ final class Gtk4EiInput {
         }
         if (device.equals(keyboard)) {
             keyboard = null;
+            used = true;
+        }
+        if (device.equals(touchscreen)) {
+            touchscreen = null;
             used = true;
         }
         if (used) {

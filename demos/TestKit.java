@@ -68,13 +68,20 @@ import java.util.function.Supplier;
  * There are three kinds of tests:
  * <ul>
  * <li>automatic tests, which the lab can check alone;</li>
- * <li>robot tests, which need robot input. The GTK 4 glass generates it only
- *     in the GNOME test session (-Dglass.gtk4.testSession=gnome, which the
- *     launcher passes under --compositor=gnome), elsewhere they are
- *     skipped;</li>
- * <li>manual tests, which need a device or a person, such as a touch screen:
+ * <li>robot tests, which need robot input. In the GNOME test session
+ *     (-Dglass.gtk4.testSession=gnome, which the launcher passes under
+ *     --compositor=gnome) the robot uses its remote desktop session; on any
+ *     other desktop it moves the pointer and types on the desktop of the user,
+ *     through the RemoteDesktop portal, which asks for the permission once.
+ *     They are skipped with -Dtests.robot=false, or when the desktop has no
+ *     robot input (no libei or portal, or the permission was refused);</li>
+ * <li>manual tests, which need a device or a person, such as a touchpad:
  *     they pass when the lab sees the events they wait for, or with their OK
- *     and FAIL buttons, and are skipped by a run until then.</li>
+ *     and FAIL buttons, and are skipped by a run until then;</li>
+ * <li>touch tests, which pass as manual tests, and which a run performs with
+ *     the touch screen that the compositor offers to the robot through
+ *     libei, when the robot runs and libei and the compositor support touch
+ *     screens (checked at run time).</li>
  * </ul>
  * With -Dtests.run=true the tests run at startup, and with -Dtests.exit=true
  * the application then exits, with status 1 when a test failed.
@@ -99,7 +106,7 @@ final class TestKit {
     }
 
     enum Kind {
-        AUTO, ROBOT, MANUAL
+        AUTO, ROBOT, MANUAL, TOUCH
     }
 
     @FunctionalInterface
@@ -110,6 +117,15 @@ final class TestKit {
          * @return what the test saw, shown next to OK
          */
         String run() throws Exception;
+    }
+
+    /** Thrown in a test when the run is stopped. */
+    static final class Stopped extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        Stopped() {
+            super("Stopped", null, false, false);
+        }
     }
 
     /** Thrown by a test that cannot run here, which is then skipped. */
@@ -159,11 +175,19 @@ final class TestKit {
             -fx-padding: 0 5 0 5;
         }
         .test-detail { -fx-font-size: 11px; -fx-text-fill: #93a1b8; -fx-padding: 0 0 4 0; }
+        .test-list, .test-list > .viewport { -fx-background-color: transparent; }
+        .test-list { -fx-padding: 0; }
         .test-summary { -fx-font-size: 16px; -fx-font-weight: bold; }
         .test-summary.ok { -fx-text-fill: #86efac; }
         .test-summary.fail { -fx-text-fill: #fda4af; }
         .button.test-run {
             -fx-background-color: -fx-accent;
+            -fx-border-color: transparent;
+            -fx-text-fill: white;
+            -fx-font-weight: bold;
+        }
+        .button.test-stop {
+            -fx-background-color: #e11d48;
             -fx-border-color: transparent;
             -fx-text-fill: white;
             -fx-font-weight: bold;
@@ -239,6 +263,7 @@ final class TestKit {
 
         Suite(String name) {
             this.name = name;
+            darkDialogs();
         }
 
         Test auto(String name, String description, Step body) {
@@ -251,6 +276,10 @@ final class TestKit {
 
         Test manual(String name, String description) {
             return add(new Test(this, name, description, Kind.MANUAL, null));
+        }
+
+        Test touch(String name, String description, Step body) {
+            return add(new Test(this, name, description, Kind.TOUCH, body));
         }
 
         private Test add(Test t) {
@@ -304,26 +333,27 @@ final class TestKit {
             runAll.getStyleClass().add("test-run");
             runAll.disableProperty().bind(BUSY);
             runAll.setOnAction(e -> runAsync(tests));
+            Button stop = stopButton(new Button("Stop"));
             summaryLabel.getStyleClass().add("test-summary");
             summaryLabel.textProperty().bind(summary);
-            HBox top = new HBox(12, runAll, summaryLabel);
+            HBox top = new HBox(12, runAll, stop, summaryLabel);
             top.setAlignment(Pos.CENTER_LEFT);
 
             GridPane grid = new GridPane(10, 6);
             int row = 0;
             for (Test t : tests) {
                 Node actions;
-                if (t.kind == Kind.MANUAL) {
+                if (t.kind == Kind.MANUAL || t.kind == Kind.TOUCH) {
                     Button ok = small("OK");
                     ok.setOnAction(e -> t.pass("Marked OK by hand"));
                     Button fail = small("FAIL");
                     fail.setOnAction(e -> t.fail("Marked FAIL by hand"));
                     actions = new HBox(4, ok, fail);
+                    if (t.kind == Kind.TOUCH) {
+                        ((HBox) actions).getChildren().addFirst(runOrStop(t));
+                    }
                 } else {
-                    Button run = small("Run");
-                    run.disableProperty().bind(BUSY);
-                    run.setOnAction(e -> runAsync(List.of(t)));
-                    actions = run;
+                    actions = runOrStop(t);
                 }
                 // The detail goes below the name, so that the table fits narrow columns
                 Label detail = new Label();
@@ -336,14 +366,42 @@ final class TestKit {
                 GridPane.setHgrow(name, Priority.ALWAYS);
                 grid.addRow(row++, statusPill(t), name, actions);
                 grid.add(detail, 1, row++, 2, 1);
+                followRunning(t, name, detail);
             }
             Label hint = new Label("Do not use the mouse or the keyboard while the robot tests run. Manual tests "
                     + "pass when the lab sees their events, or with their buttons.");
             hint.getStyleClass().add("test-detail");
             hint.setWrapText(true);
-            VBox box = new VBox(10, top, grid, hint);
+            // The table scrolls in its card, which grows with the window
+            ScrollPane list = new ScrollPane(grid);
+            list.getStyleClass().add("test-list");
+            list.setFitToWidth(true);
+            list.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+            list.setPrefHeight(240);
+            list.setMinHeight(0);
+            VBox.setVgrow(list, Priority.ALWAYS);
+            VBox box = new VBox(10, top, list, hint);
+            VBox.setVgrow(box, Priority.ALWAYS);
             box.getStylesheets().add(STYLESHEET);
             return box;
+        }
+
+        /**
+         * The Run button of a test, which stops the run while the test runs.
+         */
+        private Button runOrStop(Test t) {
+            Button b = small("Run");
+            javafx.beans.binding.BooleanBinding running = t.status.isEqualTo(Status.RUNNING);
+            b.textProperty().bind(javafx.beans.binding.Bindings.when(running).then("Stop").otherwise("Run"));
+            b.disableProperty().bind(BUSY.and(running.not()).or(STOPPING.and(running)));
+            b.setOnAction(e -> {
+                if (running.get()) {
+                    stop();
+                } else {
+                    runAsync(List.of(t));
+                }
+            });
+            return b;
         }
 
         /**
@@ -360,7 +418,9 @@ final class TestKit {
                 detail.setWrapText(true);
                 detail.setMaxHeight(48);
                 GridPane.setHgrow(detail, Priority.ALWAYS);
-                grid.addRow(row++, statusPill(t), nameLabel(t), detail);
+                Node name = nameLabel(t);
+                grid.addRow(row++, statusPill(t), name, detail);
+                followRunning(t, name, detail);
             }
             grid.getStylesheets().add(STYLESHEET);
             return grid;
@@ -397,7 +457,7 @@ final class TestKit {
         Result run(List<Test> selected) {
             fx(() -> {
                 for (Test t : selected) {
-                    if (t.kind != Kind.MANUAL || !isVerdict(t.status.get())) {
+                    if ((t.kind != Kind.MANUAL && t.kind != Kind.TOUCH) || !isVerdict(t.status.get())) {
                         t.set(Status.QUEUED, t.description);
                     }
                 }
@@ -405,14 +465,28 @@ final class TestKit {
                 style(summaryLabel);
                 beforeRun.run();
             });
-            pause(300);
             long start = System.nanoTime();
-            for (Test t : selected) {
-                runOne(t);
+            try {
+                pause(300);
+                for (Test t : selected) {
+                    runOne(t);
+                }
+            } catch (Stopped e) {
+                // Between two tests: the next ones do not run
+            }
+            boolean stopped = isStopping();
+            if (stopped) {
+                fx(() -> {
+                    for (Test t : selected) {
+                        if (t.status.get() == Status.QUEUED || t.status.get() == Status.RUNNING) {
+                            t.set(Status.IDLE, "Stopped: " + t.description);
+                        }
+                    }
+                });
             }
             long ms = (System.nanoTime() - start) / 1_000_000;
             Result result = fx(() -> result());
-            String text = result + " in " + ms + " ms";
+            String text = (stopped ? "Stopped: " : "") + result + " in " + ms + " ms";
             System.out.println("[" + name + "] " + text);
             fx(() -> {
                 summary.set(text);
@@ -431,8 +505,24 @@ final class TestKit {
                 report(t);
                 return;
             }
+            if (t.kind == Kind.TOUCH && (!robotInput() || !touchAvailable())) {
+                fx(() -> {
+                    if (!isVerdict(t.status.get())) {
+                        t.set(Status.SKIP, robotInput()
+                                ? "No touch screen for the robot (libei or the compositor): touch it by hand"
+                                : "Not seen yet: " + t.description);
+                    }
+                });
+                report(t);
+                return;
+            }
+            if ((t.kind == Kind.ROBOT || t.kind == Kind.TOUCH) && noRobotInput != null) {
+                fx(() -> t.set(Status.SKIP, "No robot input: " + noRobotInput));
+                report(t);
+                return;
+            }
             if (t.kind == Kind.ROBOT && !robotInput()) {
-                fx(() -> t.set(Status.SKIP, "Needs robot input: run under ./launcher.sh --compositor=gnome"));
+                fx(() -> t.set(Status.SKIP, "Robot tests turned off with -Dtests.robot=false"));
                 report(t);
                 return;
             }
@@ -445,17 +535,35 @@ final class TestKit {
             try {
                 detail = t.body.run();
                 status = Status.OK;
+            } catch (Stopped e) {
+                // Leaves nothing pressed, nor windows of the test
+                releaseInput();
+                fx(afterRobotFailure);
+                fx(afterEach);
+                fx(() -> t.set(Status.IDLE, "Stopped (" + (System.nanoTime() - t0) / 1_000_000 + " ms)"));
+                report(t);
+                throw e;
             } catch (Skipped e) {
                 detail = e.getMessage();
                 status = Status.SKIP;
             } catch (AssertionError e) {
                 detail = e.getMessage();
                 status = Status.FAIL;
+            } catch (UnsupportedOperationException e) {
+                // The desktop has no robot input: the next robot tests are skipped
+                if (t.kind == Kind.ROBOT || t.kind == Kind.TOUCH) {
+                    noRobotInput = e.getMessage();
+                    detail = "No robot input: " + e.getMessage();
+                    status = Status.SKIP;
+                } else {
+                    detail = e.toString();
+                    status = Status.FAIL;
+                }
             } catch (Throwable e) {
                 detail = e.toString();
                 status = Status.FAIL;
             }
-            if (status == Status.FAIL && t.kind == Kind.ROBOT) {
+            if (status == Status.FAIL && (t.kind == Kind.ROBOT || t.kind == Kind.TOUCH)) {
                 releaseInput();
                 fx(afterRobotFailure);
             }
@@ -510,7 +618,11 @@ final class TestKit {
         if (t.kind == Kind.AUTO) {
             return name;
         }
-        Label kind = new Label(t.kind == Kind.ROBOT ? "robot" : "manual");
+        Label kind = new Label(switch (t.kind) {
+            case ROBOT -> "robot";
+            case TOUCH -> "touch";
+            default -> "manual";
+        });
         kind.getStyleClass().add("test-kind");
         kind.setMinWidth(Region.USE_PREF_SIZE);
         HBox box = new HBox(6, name, kind);
@@ -532,13 +644,55 @@ final class TestKit {
         if (!LOCK.compareAndSet(false, true)) {
             return false;
         }
-        fx(() -> BUSY.set(true));
+        stopRequested = false;
+        fx(() -> {
+            STOPPING.set(false);
+            BUSY.set(true);
+        });
         return true;
     }
 
     static void unlock() {
-        fx(() -> BUSY.set(false));
+        fx(() -> {
+            BUSY.set(false);
+            STOPPING.set(false);
+        });
         LOCK.set(false);
+    }
+
+    // A stop of the run, which the waits of the running test notice
+    private static volatile boolean stopRequested;
+    private static final BooleanProperty STOPPING = new SimpleBooleanProperty();
+
+    /**
+     * Stops the run: the running test ends at its next wait, and the next
+     * tests do not run.
+     */
+    static void stop() {
+        if (LOCK.get()) {
+            stopRequested = true;
+            fx(() -> STOPPING.set(true));
+        }
+    }
+
+    static boolean isStopping() {
+        return stopRequested;
+    }
+
+    /**
+     * A Stop button, enabled while a run goes on.
+     */
+    static Button stopButton(Button b) {
+        b.getStyleClass().add("test-stop");
+        b.disableProperty().bind(BUSY.not().or(STOPPING));
+        b.setOnAction(e -> stop());
+        return b;
+    }
+
+    private static void checkStopped() {
+        if (stopRequested && !Platform.isFxApplicationThread()) {
+            throw new Stopped();
+        }
     }
 
     static ReadOnlyBooleanProperty busyProperty() {
@@ -583,14 +737,18 @@ final class TestKit {
         }
     }
 
+    // Why the desktop has no robot input, once a robot test found out
+    private static volatile String noRobotInput;
+
     /**
-     * Whether the robot can generate input: the GTK 4 glass needs the GNOME
-     * test session.
+     * Whether the robot tests run, unless turned off with -Dtests.robot=false:
+     * outside the GNOME test session the robot takes over the pointer and the
+     * keyboard of the desktop, which asks once for the permission.
      */
     static boolean robotInput() {
-        return !"Gtk4".equalsIgnoreCase(System.getProperty("glass.platform"))
-                || "gnome".equals(System.getProperty("glass.gtk4.testSession"));
+        return !"false".equals(System.getProperty("tests.robot"));
     }
+
 
     static Robot robot() {
         return fx(() -> {
@@ -681,8 +839,14 @@ final class TestKit {
     }
 
     static void pause(long ms) {
+        checkStopped();
         try {
-            Thread.sleep(ms);
+            // In steps, so that a stop does not wait for a long pause
+            long deadline = System.nanoTime() + ms * 1_000_000;
+            for (long left = ms; left > 0; left = (deadline - System.nanoTime()) / 1_000_000) {
+                Thread.sleep(Math.min(left, 50));
+                checkStopped();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -863,6 +1027,187 @@ final class TestKit {
                 fx(() -> robot().keyType(code));
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Touch input, through the touch robot of the GTK 4 glass
+
+    private static java.lang.reflect.Method touchMethod(String name, Class<?>... types) {
+        try {
+            return Class.forName("com.sun.glass.ui.gtk4.Gtk4TouchRobot").getMethod(name, types);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
+    private static Object invokeTouch(String name, Class<?>[] types, Object... args) {
+        java.lang.reflect.Method m = touchMethod(name, types);
+        if (m == null) {
+            throw new Skipped("This platform has no touch robot");
+        }
+        return fx(() -> {
+            try {
+                return m.invoke(null, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                throw e.getCause() instanceof RuntimeException re ? re : new IllegalStateException(e.getCause());
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
+    private static Boolean touchAvailable;
+
+    /**
+     * Whether the robot can touch: libei and the compositor support touch
+     * screens, which is known at run time.
+     */
+    static boolean touchAvailable() {
+        if (touchAvailable == null) {
+            try {
+                touchAvailable = Boolean.TRUE.equals(invokeTouch("isAvailable", new Class<?>[0]));
+            } catch (RuntimeException e) {
+                touchAvailable = false;
+            }
+        }
+        return touchAvailable;
+    }
+
+    static void touchDown(int id, Point2D p) {
+        invokeTouch("down", new Class<?>[] {int.class, double.class, double.class}, id, p.getX(), p.getY());
+    }
+
+    static void touchMove(int id, Point2D p) {
+        invokeTouch("move", new Class<?>[] {int.class, double.class, double.class}, id, p.getX(), p.getY());
+    }
+
+    static void touchUp(int id) {
+        invokeTouch("up", new Class<?>[] {int.class}, id);
+    }
+
+    /**
+     * Waits for a touch test to be passed or failed by the events the lab sees.
+     */
+    static String observed(Test t) {
+        await("the events of " + t.name, 4000, () -> isVerdict(t.status.get()));
+        check(t.status.get() == Status.OK, fx(() -> t.detail.get()));
+        return fx(() -> t.detail.get());
+    }
+
+    private static final String DIALOG_CSS = """
+        .root {
+            -fx-font-family: "Adwaita Sans", "Cantarell", "System";
+            -fx-font-size: 13px;
+            -fx-base: #1c2230;
+            -fx-background: #161b28;
+            -fx-control-inner-background: #11151f;
+            -fx-accent: #6366f1;
+            -fx-focus-color: #818cf8;
+            -fx-faint-focus-color: #818cf822;
+            -fx-text-base-color: #e8eef7;
+            -fx-text-background-color: #e8eef7;
+        }
+        .dialog-pane { -fx-background-color: -fx-background; }
+        .dialog-pane > .header-panel {
+            -fx-background-color: derive(-fx-background, 10%);
+            -fx-border-color: transparent transparent rgba(255, 255, 255, 0.08) transparent;
+        }
+        .dialog-pane .label { -fx-text-fill: #e8eef7; }
+        .dialog-pane > .button-bar > .container > .button {
+            -fx-background-color: rgba(255, 255, 255, 0.08);
+            -fx-background-radius: 9;
+            -fx-border-color: rgba(255, 255, 255, 0.14);
+            -fx-border-radius: 9;
+            -fx-text-fill: #e8eef7;
+        }
+        .dialog-pane > .button-bar > .container > .button:hover { -fx-background-color: rgba(255, 255, 255, 0.15); }
+        .dialog-pane > .button-bar > .container > .button:default {
+            -fx-background-color: #6366f1;
+            -fx-border-color: transparent;
+        }
+        .dialog-pane > .button-bar > .container > .button:default:hover { -fx-background-color: #818cf8; }
+        """;
+    private static final String DIALOG_STYLESHEET = "data:text/css;base64,"
+            + Base64.getEncoder().encodeToString(DIALOG_CSS.getBytes(StandardCharsets.UTF_8));
+    private static boolean darkDialogs;
+
+    /**
+     * Gives the dialogs of the labs (alerts, text input and choice dialogs)
+     * the dark look of the labs, whose stylesheets only their own scenes have.
+     */
+    private static void darkDialogs() {
+        if (darkDialogs || !Platform.isFxApplicationThread()) {
+            return;
+        }
+        darkDialogs = true;
+        javafx.collections.ListChangeListener<javafx.stage.Window> windows = c -> {
+            while (c.next()) {
+                for (javafx.stage.Window w : c.getAddedSubList()) {
+                    darkDialog(w.getScene());
+                    w.sceneProperty().addListener((obs, o, scene) -> darkDialog(scene));
+                }
+            }
+        };
+        javafx.stage.Window.getWindows().addListener(windows);
+    }
+
+    private static void darkDialog(javafx.scene.Scene scene) {
+        if (scene != null && scene.getRoot() instanceof javafx.scene.control.DialogPane
+                && !scene.getStylesheets().contains(DIALOG_STYLESHEET)) {
+            scene.getStylesheets().add(DIALOG_STYLESHEET);
+            scene.getPreferences().setColorScheme(javafx.application.ColorScheme.DARK);
+        }
+    }
+
+    /**
+     * Scrolls the list of a test, as it runs, so that its row shows.
+     */
+    private static void followRunning(Test t, Node first, Node last) {
+        t.status.addListener((obs, o, n) -> {
+            if (n == Status.RUNNING) {
+                // After the layout of the new detail
+                Platform.runLater(() -> scrollIntoView(first, last));
+            }
+        });
+    }
+
+    /**
+     * Scrolls the nearest scroll pane around two nodes, the first above the
+     * last, so that both show, with a little of what follows.
+     */
+    static void scrollIntoView(Node first, Node last) {
+        for (Node p = first.getParent(); p != null; p = p.getParent()) {
+            if (p instanceof ScrollPane sp && sp.getContent() != null) {
+                Node content = sp.getContent();
+                Bounds a = content.sceneToLocal(first.localToScene(first.getLayoutBounds()));
+                Bounds b = content.sceneToLocal(last.localToScene(last.getLayoutBounds()));
+                double contentHeight = content.getLayoutBounds().getHeight();
+                double viewport = sp.getViewportBounds().getHeight();
+                if (a == null || b == null || contentHeight <= viewport) {
+                    return;
+                }
+                double range = contentHeight - viewport;
+                double top = sp.getVvalue() * range;
+                double margin = Math.min(48, viewport / 4);
+                double y = top;
+                if (b.getMaxY() + margin > top + viewport) {
+                    y = b.getMaxY() + margin - viewport;
+                }
+                if (a.getMinY() < y) {
+                    y = a.getMinY();
+                }
+                sp.setVvalue(Math.max(0, Math.min(y, range)) / range);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Lets a card grow with its column, as the card of the tests does.
+     */
+    static <T extends Node> T grow(T node) {
+        VBox.setVgrow(node, Priority.ALWAYS);
+        return node;
     }
 
     static String fmt(Point2D p) {

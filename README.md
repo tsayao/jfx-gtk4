@@ -5,6 +5,69 @@
 > demonstration and as a proof of concept only, and has not been reviewed for
 > production use. Do not use it in production.
 
+## How it works
+
+The project is one jar for an unmodified JavaFX with a Glass on GTK 4 for
+Wayland (`-Dglass.platform=Gtk4`) and two Prism pipelines, Vulkan (`vk`) and
+OpenGL (`gl`). It is all Java: GTK, Vulkan, EGL and libei are called through
+the Foreign Function & Memory API, with [bindings](#bindings) generated at
+build time.
+
+### Bindings
+
+- GTK 4, GDK, GLib, GObject, Gio and libadwaita: the `generateGtk4Wrappers`
+  task reads their GObject introspection files (`*.gir`) and writes a Java
+  class for each type the glass uses (listed in `build.gradle`), with the
+  GObject hierarchy (`GtkPicture extends GtkWidget`) and methods that make
+  the native calls, converting strings, objects and callbacks. A function is
+  looked up the first time it is called, and `isAvailable()` tells whether
+  the GTK at run time has it, so the plugin is built with the GIR files of a
+  recent GTK and still runs on GTK 4.14.
+- Vulkan: the `generateVulkanBindings` task reads the Vulkan registry
+  (`vk.xml`) and writes a `VK` class with the constants and commands the
+  pipeline uses, and a class per structure with its memory layout.
+- EGL, GBM and OpenGL: a hand-written list of functions (`GLNative`), the
+  OpenGL ones resolved through `eglGetProcAddress`; libei, a small
+  hand-written wrapper (`Ei`).
+
+The generated sources go to `build/generated/sources`.
+
+### Rendering
+
+```
+Prism (vk / gl) ──► dma-buf ──► GdkDmabufTexture ──► GtkGraphicsOffload ──► compositor
+```
+
+The pipeline renders each frame into a dma-buf, a GPU buffer that can be
+shared between processes. GTK shows it inside a `GtkGraphicsOffload`, which
+hands the buffer to the compositor as a Wayland subsurface, so the frame
+reaches the screen without being copied. A sync file attached to the buffer
+lets the compositor, not the application, wait for the GPU to finish. The
+software pipeline, which has no dma-buf, uploads its pixels to GTK instead.
+
+The shaders of both pipelines are generated from the JSL sources of JavaFX.
+
+### Robot
+
+Wayland clients cannot inject input or read the screen, so
+`javafx.scene.robot.Robot` uses libei, the library of the compositors for
+emulated input. It gets its connection from the RemoteDesktop portal, which
+asks the user once for permission, or, in the nested GNOME Shell of the
+launcher, from its remote desktop session, without asking. Through libei it
+moves the pointer, clicks, scrolls, types and touches the screen. Pixels are
+read from the frames of the application windows themselves.
+
+### Windows on Wayland
+
+Wayland does not let clients place their windows or know where they are. The
+glass follows this, except in the nested GNOME Shell of the tests, where it
+asks the shell to place its windows, which the tests of positions and of
+multiple monitors need.
+
+Everything else maps to GTK: windows and their decorations, input methods,
+clipboard and drag and drop, file dialogs through the portal, and
+accessibility, which GTK exposes to screen readers through AT-SPI.
+
 ## Requirements
 
 - JDK 25
@@ -64,8 +127,7 @@ from Maven Central, or an SDK built from source. It was tested with JavaFX
 - For the `vk` pipeline: the Vulkan loader (`libvulkan.so.1`) and a driver
   with Vulkan 1.3 and `VK_KHR_push_descriptor`. Frames are handed to the
   compositor as dma-bufs when the driver also has `VK_KHR_external_memory_fd`
-  and `VK_EXT_external_memory_dma_buf`, and copied otherwise. Without Vulkan,
-  `-Dprism.order=vk,sw` falls back to the software pipeline.
+  and `VK_EXT_external_memory_dma_buf`, and copied otherwise.
 - For the `gl` pipeline (`-Dprism.order=gl`): EGL 1.5 with the GBM platform,
   `EGL_KHR_surfaceless_context` and `EGL_EXT_image_dma_buf_import`, and an
   OpenGL 4.5 core driver with `GL_OES_EGL_image`, on a render node
@@ -84,10 +146,12 @@ These requirements are checked when JavaFX starts:
   older than 4.14, or lacks `GtkGraphicsOffload` or `GdkDmabufTextureBuilder`,
   and when there is no Wayland compositor (no socket at `$WAYLAND_DISPLAY`, or
   `GDK_BACKEND` selects another backend).
-- The `vk` pipeline prints why Vulkan cannot be used (no loader, no Vulkan 1.3
-  device, no `VK_KHR_push_descriptor`, ...) and JavaFX tries the next pipeline
-  of `prism.order`. `-Dprism.verbose=true` shows the devices and the
-  extensions in use. The `gl` pipeline does the same for EGL and OpenGL.
+- The pipelines are tried in the order of `prism.order`, `vk,gl,sw` by
+  default: Vulkan, then OpenGL when Vulkan cannot be used, and the software
+  pipeline when neither can. The `vk` pipeline prints why Vulkan cannot be
+  used (no loader, no Vulkan 1.3 device, no `VK_KHR_push_descriptor`, ...),
+  and the `gl` pipeline does the same for EGL and OpenGL.
+  `-Dprism.verbose=true` shows the devices and the extensions in use.
 
 ### Command line
 
@@ -110,7 +174,7 @@ java --module-path=/path/to/javafx/lib --add-modules=javafx.controls \
      --add-exports=javafx.graphics/com.sun.prism.paint=ALL-UNNAMED \
      --add-exports=javafx.graphics/com.sun.prism.ps=ALL-UNNAMED \
      --add-exports=javafx.graphics/com.sun.prism.shader=ALL-UNNAMED \
-     -Dglass.platform=Gtk4 -Dprism.order=vk,sw \
+     -Dglass.platform=Gtk4 -Dprism.order=vk,gl,sw \
      -cp jfx-gtk4.jar:app.jar app.Main
 ```
 
@@ -124,8 +188,8 @@ build writes them to `build/run.args`, for `java @build/run.args` (paths under t
 home directory are relative to the project directory, from where it must run).
 
 JavaFX loads `com.sun.glass.ui.gtk4.Gtk4PlatformFactory` for
-`-Dglass.platform=Gtk4` and `com.sun.prism.vk.VKPipeline` for
-`-Dprism.order=vk`. With a JavaFX that supports the `ext:` prefix, the classes
+`-Dglass.platform=Gtk4`, and `com.sun.prism.vk.VKPipeline` and
+`com.sun.prism.gl.GLPipeline` for the `vk` and `gl` entries of `prism.order`. With a JavaFX that supports the `ext:` prefix, the classes
 can also be given by name: `-Dglass.platform=ext:com.sun.glass.ui.gtk4.Gtk4PlatformFactory`.
 
 | System property              | Description                                             |
@@ -158,53 +222,106 @@ be removed.
 
 ## Demos
 
-The `*Demo.java` files in `demos/` are single-file applications that exercise
-the platform: `aurora`, `disco`, `fireworks`, `fractals`, `nebula`,
-`render` and `stage`. `Wallpaper.java` is the animated desktop used by
-`launcher.sh` under KWin.
+`demos/` has two applications, which `launcher.sh` runs (see below):
 
-Others test the platform integration, after the manual tests of OpenJFX:
+- `eyecandy`, the showcases of the Prism renderer in one window, chosen in
+  the middle of its header bar or with Ctrl+1 to Ctrl+5: Nebula (a planet, its
+  moon, a galaxy and a nebula in 3D), Fractals (Mandelbrot and Julia sets
+  computed in the background, geometric fractals and a Menger sponge),
+  Fireworks, Disco and Aurora. `-Deyecandy.show=fractals` starts on one;
+- `tests`, the tests of the platform integration (see [Tests](#tests)).
 
-| Demo            | Tests                                                                    |
-|-----------------|--------------------------------------------------------------------------|
-| `dragdrop`      | Transfer modes and modifiers, data formats, drag images and offsets, drops from and to other applications, full drag |
-| `clipboard`     | Copy and paste of text, HTML, RTF, URLs, files, images and custom formats, checked by a second process |
-| `touch`         | Touch points, and the scroll, zoom, rotate and swipe gestures of touch screens and touchpads |
-| `robot`         | A self test of `javafx.scene.robot.Robot`: pointer, buttons, wheel, keyboard, pixels and screen capture |
-| `accessibility` | Accessible roles, names and states, live changes, and an inspector of the accessible attributes |
-| `windows`       | Every window style, focus, maximized, full screen and minimized states before and after show, modality, min and max sizes, popups |
-| `dialogs`       | File and folder choosers (through the portal), extension filters, alerts, text input and choice dialogs |
-| `scene3d`       | 3D rendering checked on the screen and in snapshots, and the frame rate of heavier scenes; skipped on the `sw` pipeline |
-| `swing`         | SwingNode painting and input, a JFXPanel in a JFrame, the EDT and FX threads, and the clipboard between Swing (X11, through Xwayland) and JavaFX |
-| `tests`         | The tests of all of the above, in a tab per lab, run one lab after the other |
-
-Each of these labs has a table of tests, which show OK, FAIL or SKIP (see
-`demos/TestKit.java`), and `tests` shows all the labs in one window, a tab
-per lab, with an overview and a button that runs the tests of every lab:
-
-- automatic tests check what the lab can do alone, such as reading the
-  clipboard in a second process, exchanging data with `wl-copy` and
-  `wl-paste`, or reading the AT-SPI tree of the application with `python3`
-  and the Atspi bindings, as a screen reader does;
-- robot tests drive the lab with `javafx.scene.robot.Robot`: drags between
-  the tiles and to the drop target, copy and paste with the keyboard, focus
-  traversal and mnemonics. The GTK 4 glass generates robot input only in the
-  GNOME test session, so they run under `--compositor=gnome`, where the
-  launcher passes `-Dglass.gtk4.testSession=gnome`, and are skipped elsewhere;
-- manual tests wait for a device the robot does not have, such as a touch
-  screen: they pass when the lab sees their events, or with their OK and FAIL
-  buttons.
+`Wallpaper.java` is the animated desktop of `launcher.sh` under KWin.
 
 ```
-./launcher.sh --apps=tests --compositor=gnome
-./launcher.sh --apps=tests --compositor=gnome -- -Dtests.run=true -Dtests.exit=true
+./launcher.sh
+./launcher.sh -- -Deyecandy.show=fractals
+```
+
+![Fractals: the Mandelbrot set, a Menger sponge and geometric fractals](docs/images/fractals-mandelbrot.jpg)
+
+
+![Nebula, Fireworks, Disco and Aurora](docs/images/eyecandy.jpg)
+
+## Tests
+
+`tests` runs the tests of the GTK 4 glass and of the Prism pipelines, in a
+lab per area, after the manual tests and the system tests (`tests/system`) of
+OpenJFX. Each lab is a tab, with what it tests on one side and its table of
+tests on the other, which show OK, FAIL or SKIP; the overview shows the
+results of every lab, and Run all labs runs them one lab after the other.
+Every run can be stopped.
+
+![The tests app after a run](docs/images/tests.png)
+
+| Lab             | Tests                                                                    |
+|-----------------|--------------------------------------------------------------------------|
+| Robot           | `javafx.scene.robot.Robot`: pointer, buttons, wheel, keyboard, pixels and screen capture; the mouse location and the wheel scale (MouseLocationOnScreenTest, MouseWheelScaleTest) |
+| Windows         | Every window style, focus, maximized, full screen and minimized states before and after show, modality, min and max sizes, popups |
+| Screens         | Two monitors of different scales: stages, popups and dialogs on the second one, moves between them, maximized and full screen there |
+| Stage           | A stage playground (styles, backdrops, owners, properties), and sizeToScene, new scene sizes, iconify, redraw after deiconify, ownership, modal children, key events that close a stage, nested event loops and showAndWait (SizeToSceneTest, NewSceneSizeTest, IconifyTest, DrawAfterDeiconifyTest, DeiconifiedWithChildTest, StageOwnershipTest, SceneChangeShouldNotFocusStageTest, SetSceneScalingTest, KeyEventClosesStageTest, NestedEventLoopTest, ShowAndWaitTest) |
+| Dialogs         | File and folder choosers (through the portal), extension filters, alerts, text input and choice dialogs, dialog sizes (DialogRepeatedShowHideTest, DialogWithOwnerSizingTest, MakeResizableAndResizeTest) |
+| Drag and drop   | Transfer modes and modifiers, data formats, drag images and offsets, drops from and to other applications, full drag |
+| Clipboard       | Copy and paste of text, HTML, RTF, URLs, files, images and custom formats, checked by a second process and with `wl-copy` and `wl-paste` |
+| Render          | A showcase of shapes, paints, text, images, effects, blending, canvases, 3D and CSS, and sRGB colors, PixelBuffer updates, LCD text, snapshots (SRGBTest, PixelBufferDrawTest, TransparentLCDTest, Snapshot1Test) |
+| 3D              | 3D rendering checked on the screen and in snapshots, and the frame rate of heavier scenes; skipped on the `sw` pipeline |
+| Swing           | SwingNode painting and input, a JFXPanel in a JFrame, a non-focusable JFXPanel (NonFocusableJFXPanelTest), the EDT and FX threads, and the clipboard between Swing (X11, through Xwayland) and JavaFX |
+| Touch           | Touch points and the scroll, zoom and rotate gestures, with the touch screen of the robot; swipe with a touchpad |
+| Accessibility   | Accessible roles, names and states, live changes, and the AT-SPI tree read as a screen reader does |
+
+There are four kinds of tests (see `demos/TestKit.java`):
+
+- automatic tests check what the lab can do alone, such as reading back the
+  pixels of a window, the clipboard in a second process, or the AT-SPI tree of
+  the application with `python3` and the Atspi bindings;
+- robot tests drive the lab with `javafx.scene.robot.Robot`. The GTK 4 glass
+  generates robot input with libei: on the desktop of the user through the
+  RemoteDesktop portal, which asks once for the permission and then takes over
+  the pointer and the keyboard, or in the nested GNOME Shell of
+  `--compositor=gnome`, which leaves the desktop alone. `-Dtests.robot=false`
+  skips them, and they are skipped when the desktop has no robot input;
+- touch tests touch the lab with the touch screen that libei and the
+  compositor offer to the robot, when they do (GNOME 51 does);
+- manual tests wait for a device the robot does not have, such as a
+  touchpad: they pass when the lab sees their events, or with their OK and
+  FAIL buttons.
+
+### Running the tests
+
+The tests run best in the nested GNOME Shell of the launcher (GNOME 51, in a
+toolbox container, see [Launcher](#launcher)), where the robot does not take
+over the desktop and windows can be placed at given positions. With
+`--headless` the shell has no window at all, so that the desktop stays free
+and its focus does not matter, and it gets a second monitor at another scale
+for the Screens lab (which a shell with a window gets with
+`--monitors=1600x960@1,1280x800@2`, in a second window):
+
+```
+./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
 ```
 
 `-Dtests.run=true` runs the tests at startup and `-Dtests.exit=true` exits
 afterwards, with status 1 when a test failed; each result is also printed, as
-`OK`, `FAIL` or `SKIP` lines. A toolbox container created before these tests
-needs their tools: `toolbox run -c jfx-gnome51 sudo dnf install wl-clipboard
-python3-gobject at-spi2-core`.
+`OK`, `FAIL` or `SKIP` lines, and as a summary per lab. Other options:
+
+| Option                          | Effect                                                     |
+|---------------------------------|------------------------------------------------------------|
+| `-Dtests.labs=robot,windows`    | Keeps only these labs, by name without spaces              |
+| `-Dtests.robot=false`           | Skips the robot tests                                      |
+| `--pipeline=vk\|gl\|sw`         | Runs them on one Prism pipeline                            |
+| `--monitors=1600x960@1,1280x800@2` | The monitors of the nested shell and their scales        |
+| `--screenshot=FILE`             | Saves a screenshot of the nested desktop (with `--headless`, then ends) |
+
+Without `--compositor`, the tests run on the current desktop, which asks once
+to allow the remote control of the robot; the Screens lab is skipped there:
+
+```
+./launcher.sh --apps=tests
+```
+
+The toolbox container gets the tools of the tests (`wl-clipboard`,
+`python3-gobject` and the AT-SPI registry of `at-spi2-core`) when it is
+created, and a container created before them gets them on the next run.
 
 ## Launcher
 
@@ -213,22 +330,24 @@ nested compositor, with the plugin and the JavaFX SDK of `build/run.args`, so
 the plugin is built first with `./gradlew jar`.
 
 ```
-./launcher.sh --apps=nebula,fractals
+./launcher.sh
 ./launcher.sh --apps=all --compositor=kwin
-./launcher.sh --apps=stage --compositor=gnome
-./launcher.sh --apps=disco --pipeline=sw --backdrop=off -- -Dglass.gtk4.verbose=all
+./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
+./launcher.sh --pipeline=sw --backdrop=off -- -Deyecandy.show=disco -Dglass.gtk4.verbose=all
 ```
 
 | Option                       | Description                                                     |
 |------------------------------|-----------------------------------------------------------------|
-| `--apps=a,b,...`             | Demos to run, by name, or `all` (`nebula`)                     |
+| `--apps=a,b,...`             | Demos to run, `eyecandy` or `tests`, or `all` (`eyecandy`)     |
 | `--compositor=none\|gnome\|kwin` | Current desktop, or a nested compositor (`none`)        |
-| `--pipeline=vk\|gl\|sw`        | Prism pipeline: Vulkan, OpenGL 4.5 or software (`vk`)          |
+| `--pipeline=auto\|vk\|gl\|sw`  | Prism pipeline: Vulkan, OpenGL 4.5 or software; `auto` tries them in that order (`auto`) |
 | `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |
 | `--toolbox=NAME`             | Toolbox container with GNOME 51 (`jfx-gnome51`), or `none` for the GNOME Shell of the host |
 | `--toolbox-release=N`        | Fedora release of a new toolbox container (`45`)               |
 | `--wallpaper=FILE`           | gnome: desktop image; kwin: `javafx` for `Wallpaper.java`      |
 | `--size=WxH`, `--scale=N`    | gnome, kwin: size of the nested output (2400x1440); kwin: its scale |
+| `--monitors=WxH@S,...`       | gnome: monitors side by side, with their scales, each in a window of its own without `--headless` (`SIZE@1`; `tests` with `--headless`: `SIZE@1,1280x800@2`) |
+| `--headless`                 | gnome: no window on the desktop, virtual monitors instead; the host focus does not matter |
 | `--screenshot=FILE`          | gnome: screenshot of the nested desktop                        |
 | `--list`, `--help`           | Lists the demos, or shows all the options                      |
 

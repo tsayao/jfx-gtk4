@@ -186,6 +186,8 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
 
     private boolean mapped;
     private boolean destroyed;
+    // Hiding the window, which deactivates it at once
+    private boolean hiding;
     private boolean boundsSet;
     private boolean resizable = true;
     private boolean enabled = true;
@@ -686,6 +688,13 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
 
         getCurrentView().ifPresent(v -> v.onWindowFocus(isActive));
 
+        if (hiding) {
+            // As with GTK 3, where the focus out arrives after the window is
+            // gone, a window that hides does not lose the focus: the scene
+            // keeps it (a SwingNode that loses it starts a deactivation timer
+            // on Linux, whose events keep AWT, and the application, running)
+            return;
+        }
         if (!isActive || isEnabled()) {
             notifyFocus(isActive ? WindowEvent.FOCUS_GAINED : WindowEvent.FOCUS_LOST);
         } else {
@@ -838,6 +847,11 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             floatingShown |= isFloating();
             Gtk4Log.log(SIZING, "updateGeometry: window size %dx%d", ww, wh);
             notifyWindowResize();
+            if (testTag != null && mapped && !isFloating()) {
+                // The compositor moved the window as it maximized it or made it
+                // full screen, which the state change may have reported too early
+                Gtk4TestSession.schedulePlacement(this);
+            }
         }
 
         if (vw != viewWidth || vh != viewHeight) {
@@ -1346,7 +1360,12 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             viewWidget.grabFocus();
         } else {
             getCurrentView().ifPresent(Gtk4View::notifyMouseExitIfEntered);
-            gtkWindow.setVisible(false);
+            hiding = true;
+            try {
+                gtkWindow.setVisible(false);
+            } finally {
+                hiding = false;
+            }
         }
         return visible;
     }
@@ -1938,6 +1957,57 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
 
     int getViewWidth() {
         return viewWidth;
+    }
+
+    // Outside a test session the compositor does not tell where a window is: the
+    // robot learns it from the position of its pointer in the view
+    private boolean positionKnown;
+
+    /**
+     * Whether the screen position of the window is known: in a test session,
+     * or once the robot pointer was over it.
+     */
+    boolean isPositionKnown() {
+        return positionKnown || Gtk4TestSession.isEnabled();
+    }
+
+    /**
+     * Sets the screen position of the view, learned from the robot: its
+     * pointer at a screen point is at a point of the view.
+     */
+    void setViewScreenPosition(int x, int y) {
+        positionKnown = true;
+        int fx = x - viewX;
+        int fy = y - viewY;
+        if (fx != frameX || fy != frameY) {
+            Gtk4Log.log(SIZING, "robot: frame at %d,%d", fx, fy);
+            frameX = fx;
+            frameY = fy;
+            notifyMove(frameX, frameY);
+        }
+    }
+
+    /**
+     * The toplevels shown, the active one first, whose view contains a
+     * screen point at their known or assumed position.
+     */
+    static List<Gtk4Window> getToplevelsAt(int x, int y) {
+        Gtk4Window active = getActiveWindow();
+        List<Gtk4Window> found = new ArrayList<>();
+        for (Gtk4Window w : windowMap.values()) {
+            if (!w.isPopup() && w.isShowing() && w.containsScreenPoint(x, y)) {
+                if (w == active) {
+                    found.addFirst(w);
+                } else {
+                    found.add(w);
+                }
+            }
+        }
+        return found;
+    }
+
+    boolean isShowingToplevel() {
+        return !isPopup() && isShowing();
     }
 
     int getViewHeight() {

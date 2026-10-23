@@ -30,8 +30,13 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.paint.Color;
 
+import com.sun.glass.ui.Screen;
+import com.sun.glass.ui.gtk4.wrappers.GMainContext;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,10 +45,19 @@ import java.util.Map;
  * A robot that generates input through the compositor and captures the frames
  * that the windows of the application present.
  * <p>
- * Wayland clients cannot inject input, so the robot generates it only in a
- * test session, where GNOME Shell emulates the devices through libei. The
+ * Wayland clients cannot inject input: the robot emulates the devices
+ * through libei, in a remote desktop session of the compositor. In a test
+ * session (-Dglass.gtk4.testSession=gnome) it is the session of GNOME Shell,
+ * which also places the windows; elsewhere it is the session of the
+ * RemoteDesktop portal, which the desktop asks the user to allow once. The
  * events reach the application as any other input. Positions are global, in
  * the logical coordinates of the compositor.
+ * <p>
+ * Outside a test session the compositor does not tell where the windows are.
+ * The robot learns it from its pointer: when the pointer it moved to a screen
+ * point is at a point of a view, the window is where both points meet. The
+ * first move to a window whose position is not known yet looks for the
+ * window over the screens, and is then made to the intended point of it.
  */
 final class Gtk4Robot extends GlassRobot {
 
@@ -53,9 +67,20 @@ final class Gtk4Robot extends GlassRobot {
     private static final int BTN_SIDE = 0x113;
     private static final int BTN_EXTRA = 0x114;
 
+    // How long a view may take to report the pointer of a move of the robot
+    private static final long POINTER_REPORT_NANOS = 500_000_000L;
+    private static final long LOCATE_WAIT_NANOS = 60_000_000L;
+    private static final int MAX_PROBES = 600;
+
     private Gtk4EiInput input;
     private double mouseX;
     private double mouseY;
+
+    // The last point the robot moved the pointer to, until a view reports it
+    private static double pendingX;
+    private static double pendingY;
+    private static long pendingTime;
+    private static boolean pending;
 
     @Override
     public void create() {
@@ -64,19 +89,57 @@ final class Gtk4Robot extends GlassRobot {
         }
     }
 
+    /**
+     * Called by the views with the position of the pointer in them: right
+     * after a move of the robot, it gives the screen position of the window.
+     */
+    static void pointerAt(Gtk4Window window, double x, double y) {
+        if (!pending || window == null || Gtk4TestSession.isEnabled() || !window.isShowingToplevel()) {
+            return;
+        }
+        pending = false;
+        if (System.nanoTime() - pendingTime > POINTER_REPORT_NANOS) {
+            // Too late to be the move of the robot: the user may have moved the pointer
+            return;
+        }
+        window.setViewScreenPosition((int) Math.round(pendingX - x), (int) Math.round(pendingY - y));
+    }
+
     @Override
     public void destroy() {
     }
 
+    // One remote desktop session for the robots and the touch robot
+    private static Gtk4EiInput sharedInput;
+    // Why the robot has no input, which asking again would not change
+    private static UnsupportedOperationException unavailable;
+
+    static Gtk4EiInput sharedInput() {
+        if (unavailable != null) {
+            throw new UnsupportedOperationException(unavailable.getMessage(), unavailable);
+        }
+        if (sharedInput == null) {
+            try {
+                sharedInput = Gtk4EiInput.connect();
+            } catch (UnsupportedOperationException e) {
+                // No libei or no portal, or the user refused: do not ask on every move
+                unavailable = e;
+                throw e;
+            }
+        }
+        if (Gtk4TestSession.isEnabled()) {
+            Gtk4TestSession.awaitPlacements();
+        }
+        return sharedInput;
+    }
+
     private Gtk4EiInput input() {
-        if (!Gtk4TestSession.isEnabled()) {
-            throw new UnsupportedOperationException(
-                    "The GTK 4 robot generates input only with -Dglass.gtk4.testSession=gnome");
-        }
         if (input == null) {
-            input = Gtk4EiInput.connect();
+            input = sharedInput();
         }
-        Gtk4TestSession.awaitPlacements();
+        if (Gtk4TestSession.isEnabled()) {
+            Gtk4TestSession.awaitPlacements();
+        }
         return input;
     }
 
@@ -115,9 +178,74 @@ final class Gtk4Robot extends GlassRobot {
     @Override
     public void mouseMove(double x, double y) {
         Application.checkEventThread();
-        input().moveTo(x, y);
-        mouseX = x;
-        mouseY = y;
+        Gtk4EiInput in = input();
+        double tx = x;
+        double ty = y;
+        if (!Gtk4TestSession.isEnabled()) {
+            List<Gtk4Window> hits = Gtk4Window.getToplevelsAt((int) Math.floor(x), (int) Math.floor(y));
+            if (!hits.isEmpty() && !hits.getFirst().isPositionKnown()) {
+                // The point was computed with the assumed position of the window
+                Gtk4Window w = hits.getFirst();
+                int assumedX = w.getScreenX();
+                int assumedY = w.getScreenY();
+                if (locate(in, w)) {
+                    tx = x - assumedX + w.getScreenX();
+                    ty = y - assumedY + w.getScreenY();
+                }
+            }
+        }
+        moveTo(in, tx, ty);
+        mouseX = tx;
+        mouseY = ty;
+    }
+
+    private static void moveTo(Gtk4EiInput in, double x, double y) {
+        pendingX = x;
+        pendingY = y;
+        pendingTime = System.nanoTime();
+        pending = true;
+        in.moveTo(x, y);
+    }
+
+    /**
+     * Moves the pointer over the screens, from their centers outwards, until
+     * the window reports it.
+     */
+    private static boolean locate(Gtk4EiInput in, Gtk4Window w) {
+        int step = Math.max(24, Math.min(w.getViewWidth(), w.getViewHeight()) / 2);
+        List<double[]> probes = new ArrayList<>();
+        for (Screen screen : Screen.getScreens()) {
+            double cx = screen.getX() + screen.getWidth() / 2.0;
+            double cy = screen.getY() + screen.getHeight() / 2.0;
+            List<double[]> points = new ArrayList<>();
+            for (int y = screen.getY() + step / 2; y < screen.getY() + screen.getHeight(); y += step) {
+                for (int x = screen.getX() + step / 2; x < screen.getX() + screen.getWidth(); x += step) {
+                    points.add(new double[] {x, y});
+                }
+            }
+            points.sort(Comparator.comparingDouble(p -> Math.hypot(p[0] - cx, p[1] - cy)));
+            probes.addAll(points);
+        }
+        GMainContext context = GMainContext.default_();
+        int count = 0;
+        for (double[] p : probes) {
+            if (++count > MAX_PROBES) {
+                break;
+            }
+            moveTo(in, p[0], p[1]);
+            long deadline = System.nanoTime() + LOCATE_WAIT_NANOS;
+            while (pending && System.nanoTime() < deadline) {
+                if (!context.iteration(false)) {
+                    Thread.onSpinWait();
+                }
+            }
+            if (w.isPositionKnown()) {
+                Gtk4Log.log(Gtk4Log.Category.SIZING, "robot: found the window after %d moves", count);
+                return true;
+            }
+        }
+        Gtk4Log.log(Gtk4Log.Category.SIZING, "robot: the window was not found");
+        return false;
     }
 
     @Override

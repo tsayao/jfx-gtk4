@@ -471,6 +471,7 @@ public class Gtk4View extends View {
         if (!toViewCoordinates(event, px, py)) {
             return;
         }
+        Gtk4Robot.pointerAt(window, px[0], py[0]);
         int x = (int) px[0];
         int y = (int) py[0];
         lastMouseX = x;
@@ -644,6 +645,7 @@ public class Gtk4View extends View {
     }
 
     void onEnter(GtkEventController controller, double x, double y) {
+        Gtk4Robot.pointerAt(window, x, y);
         int ix = (int) x;
         int iy = (int) y;
         lastMouseX = ix;

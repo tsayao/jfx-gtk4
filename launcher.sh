@@ -45,11 +45,13 @@
 #
 # Options:
 #   --apps=a,b,...          demos to run, by name (see --list), or "all"
-#                           (nebula)
+#                           (eyecandy)
 #   --compositor=gnome|kwin|none
 #                           nested compositor, or none for the current
 #                           desktop (none)
-#   --pipeline=vk|gl|sw     Prism pipeline: Vulkan, OpenGL 4.5 or software (vk)
+#   --pipeline=auto|vk|gl|sw
+#                           Prism pipeline: Vulkan, OpenGL 4.5 or software;
+#                           auto tries them in that order (auto)
 #   --backdrop=on|off       blur the area behind the windows (on)
 #   --toolbox=NAME          toolbox container with GNOME, or
 #                           "none" to use the GNOME Shell of the host
@@ -58,32 +60,41 @@
 #                           kwin: "javafx" for the JavaFX wallpaper
 #   --size=WxH              gnome, kwin: size of the nested output (2400x1440)
 #   --scale=N               kwin: output scale (1)
+#   --monitors=WxH@S,...    gnome: monitors of the nested shell, side by side,
+#                           with their scales, each in a window of its own
+#                           without --headless (SIZE@1); with --headless the
+#                           tests get a second monitor at another scale for
+#                           their multi-monitor tests (SIZE@1,1280x800@2)
+#   --headless              gnome: run the nested shell without a window, on
+#                           a virtual monitor of --size: nothing shows on the
+#                           desktop and the focus on the host does not matter
 #   --screenshot=FILE       gnome: save a screenshot of the nested desktop
-#   --screenshot-delay=S    seconds to wait before the screenshot (12)
+#   --screenshot-delay=S    seconds to wait before the screenshot (12);
+#                           with --headless, the session then ends
 #   --list                  list the demos and exit
 #   --help, -h              show this help and exit
 #
 # The environment variables GDK_DISABLE and GSK_DEBUG are passed to the demos.
-# The extra JVM options are passed to the demos. Under GNOME, the tests app and
-# the labs with tests (robot, windows, dialogs, dragdrop, clipboard, scene3d, touch,
-# accessibility) get
-# -Dglass.gtk4.testSession=gnome, which their robot tests need. The tests app
-# runs the tests of every lab, in a tab per lab; -Dtests.run=true runs them at
-# startup and -Dtests.exit=true exits afterwards, with status 1 on a failure.
+# The extra JVM options are passed to the demos. The demos are eyecandy, the
+# showcases of the Prism renderer in one window (-Deyecandy.show=fractals
+# starts on one), and tests, which runs the tests of every lab, in a tab per
+# lab: -Dtests.run=true runs them at startup, -Dtests.exit=true exits
+# afterwards, with status 1 on a failure, and -Dtests.labs=robot,windows keeps
+# only some labs. Under GNOME the tests get -Dglass.gtk4.testSession=gnome, so
+# that the robot uses the remote desktop session of the nested shell.
 #
 # Examples:
-#   ./launcher.sh --apps=nebula,fractals
-#   ./launcher.sh --apps=all --compositor=kwin
-#   ./launcher.sh --apps=stage --compositor=gnome
-#   ./launcher.sh --apps=robot --compositor=gnome
-#   ./launcher.sh --apps=tests --compositor=gnome -- -Dtests.run=true -Dtests.exit=true
+#   ./launcher.sh
+#   ./launcher.sh --apps=eyecandy --compositor=kwin -- -Deyecandy.show=fractals
+#   ./launcher.sh --apps=tests
+#   ./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 DEMOS=$ROOT/demos
 
-APPS=nebula
+APPS=eyecandy
 COMPOSITOR=none
-PIPELINE=vk
+PIPELINE=auto
 BACKDROP=on
 TOOLBOX=jfx-gnome51
 TOOLBOX_RELEASE=45
@@ -95,6 +106,8 @@ SIZE=2400x1440
 SCALE=1
 SCREENSHOT=
 SCREENSHOT_DELAY=12
+HEADLESS=
+MONITORS=
 
 usage() {
     sed -n '/^# Runs one or more/,/^[^#]/p' "$0" | sed -e '/^[^#]/d' -e 's/^# \{0,1\}//'
@@ -122,6 +135,8 @@ while [ $# -gt 0 ]; do
         --scale=*) SCALE=${1#*=} ;;
         --screenshot=*) SCREENSHOT=${1#*=} ;;
         --screenshot-delay=*) SCREENSHOT_DELAY=${1#*=} ;;
+        --headless) HEADLESS=1 ;;
+        --monitors=*) MONITORS=${1#*=} ;;
         --list) demos; exit 0 ;;
         --help|-h) usage 0 ;;
         --) shift; break ;;
@@ -135,8 +150,9 @@ case "$COMPOSITOR" in
     *) echo "Unknown compositor: $COMPOSITOR (gnome, kwin or none)" >&2; exit 2 ;;
 esac
 case "$PIPELINE" in
-    vk|gl|sw) ;;
-    *) echo "Unknown pipeline: $PIPELINE (vk, gl or sw)" >&2; exit 2 ;;
+    auto) PRISM_ORDER=vk,gl,sw ;;
+    vk|gl|sw) PRISM_ORDER=$PIPELINE ;;
+    *) echo "Unknown pipeline: $PIPELINE (auto, vk, gl or sw)" >&2; exit 2 ;;
 esac
 case "$BACKDROP" in
     on) BACKDROP_OPTION=-Dglass.gtk4.backdrop=true ;;
@@ -181,12 +197,21 @@ relaunch() {
     "$@" sh "$0" --apps="$APPS" --compositor="$COMPOSITOR" --pipeline="$PIPELINE" \
         --backdrop="$BACKDROP" --toolbox="$TOOLBOX" --toolbox-release="$TOOLBOX_RELEASE" \
         --wallpaper="$WALLPAPER" --size="$SIZE" --scale="$SCALE" --screenshot="$SCREENSHOT" \
-        --screenshot-delay="$SCREENSHOT_DELAY" -- $JVM_OPTIONS
+        --screenshot-delay="$SCREENSHOT_DELAY" ${HEADLESS:+--headless} ${MONITORS:+--monitors=$MONITORS} \
+        -- $JVM_OPTIONS
 }
 JVM_OPTIONS="$*"
 
 ensure_toolbox() {
     if podman container exists "$TOOLBOX" 2>/dev/null; then
+        # A container created before a package joined the list, such as the
+        # AT-SPI registry of the accessibility tests, gets it now
+        missing=$(toolbox run --container "$TOOLBOX" sh -c \
+            'for p in "$@"; do rpm -q "$p" > /dev/null 2>&1 || printf "%s " "$p"; done' sh $TOOLBOX_PACKAGES)
+        if [ -n "$missing" ]; then
+            echo "Installing in $TOOLBOX: $missing"
+            toolbox run --container "$TOOLBOX" sudo dnf install -y $missing || exit 1
+        fi
         return
     fi
     echo "The toolbox container $TOOLBOX does not exist. It can be created from Fedora $TOOLBOX_RELEASE"
@@ -260,12 +285,14 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+# The end of a headless session after its screenshot
+trap 'exit 0' USR1
 
 run() {
     cd "$ROOT" || exit 1
     exec java @"$RUN_ARGS" \
         --add-exports javafx.graphics/com.sun.prism=ALL-UNNAMED \
-        -Dprism.order=$PIPELINE $BACKDROP_OPTION "$@"
+        -Dprism.order=$PRISM_ORDER $BACKDROP_OPTION "$@"
 }
 
 wait_for_socket() {
@@ -275,6 +302,39 @@ wait_for_socket() {
     done
     echo "The nested compositor did not start, see $LOGS" >&2
     exit 1
+}
+
+# Places the monitors of the nested shell side by side, at their scales
+apply_monitors() {
+    case "$MONITORS" in
+        *@*) ;;
+        *) return ;;
+    esac
+    MONITORS=$MONITORS python3 - <<'PY' > "$LOGS/monitors.log" 2>&1 || echo "The monitors were not configured, see $LOGS/monitors.log" >&2
+import os
+from gi.repository import Gio, GLib
+
+wanted = [float(m.split('@')[1]) if '@' in m else 1.0 for m in os.environ['MONITORS'].split(',')]
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+def call(method, args, reply):
+    return bus.call_sync('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+                         'org.gnome.Mutter.DisplayConfig', method, args, GLib.VariantType(reply),
+                         Gio.DBusCallFlags.NONE, -1, None).unpack()
+serial, monitors, logical, props = call('GetCurrentState', None, '(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})')
+# The order of the connectors is the order of the virtual monitors
+monitors = sorted(monitors, key=lambda m: m[0][0])
+config = []
+x = 0
+for i, (ids, modes, mprops) in enumerate(monitors):
+    mode = next((m for m in modes if m[6].get('is-current')), modes[0])
+    scale = wanted[i] if i < len(wanted) else 1.0
+    # The nearest scale that the mode supports
+    scale = min(mode[5], key=lambda s: abs(s - scale)) if mode[5] else scale
+    config.append((x, 0, scale, 0, i == 0, [(ids[0], mode[0], {})]))
+    print(ids[0], mode[0], 'scale', scale, 'at', x)
+    x += int(round(mode[1] / scale))
+call('ApplyMonitorsConfig', GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', (serial, 1, config, {})), '()')
+PY
 }
 
 start_gnome() {
@@ -309,7 +369,34 @@ picture-options='zoom'
 EOF
     export GSETTINGS_BACKEND=keyfile
 
-    (unset WAYLAND_DISPLAY DISPLAY; exec gnome-shell --devkit --devkit-args="--monitor-size=$SIZE" \
+    if [ -z "$MONITORS" ]; then
+        MONITORS=$SIZE@1
+        # The devkit shows each monitor in a window of its own: the second
+        # monitor of the tests is for the headless shell only
+        if [ -n "$HEADLESS" ]; then
+            case ",$APPS," in
+                *,tests,*|*,all,*) MONITORS="$SIZE@1,1280x800@2" ;;
+            esac
+        fi
+    fi
+    set --
+    devkit=
+    for m in $(printf '%s' "$MONITORS" | tr ',' ' '); do
+        if [ -n "$HEADLESS" ]; then
+            set -- "$@" --virtual-monitor "${m%@*}"
+        elif [ -z "$devkit" ]; then
+            devkit="--monitor-size=${m%@*}"
+        else
+            devkit="$devkit --add-monitor=${m%@*}"
+        fi
+    done
+    if [ -n "$HEADLESS" ]; then
+        # No window on the desktop, whose focus would deactivate the nested windows
+        set -- --headless "$@"
+    else
+        set -- --devkit --devkit-args="$devkit"
+    fi
+    (unset WAYLAND_DISPLAY DISPLAY; exec gnome-shell "$@" \
         --unsafe-mode --wayland --wayland-display=$SOCKET) > "$LOGS/shell.log" 2>&1 &
     CHILDREN="$CHILDREN $!"
     wait_for_socket
@@ -321,6 +408,7 @@ EOF
     done
     gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
         --method org.gnome.Shell.Eval "Main.overview.hide()" > /dev/null 2>&1
+    apply_monitors
     sleep 1
 
     export WAYLAND_DISPLAY=$SOCKET GDK_BACKEND=wayland XDG_CURRENT_DESKTOP=GNOME
@@ -348,7 +436,9 @@ EOF
     if [ -n "$SCREENSHOT" ]; then
         (sleep "$SCREENSHOT_DELAY"
          gdbus call --session --dest org.gnome.Shell.Screenshot --object-path /org/gnome/Shell/Screenshot \
-             --method org.gnome.Shell.Screenshot.Screenshot false false "$SCREENSHOT") > /dev/null 2>&1 &
+             --method org.gnome.Shell.Screenshot.Screenshot false false "$SCREENSHOT"
+         # Nobody can close the demos of a headless session
+         [ -n "$HEADLESS" ] && kill -USR1 $$) > /dev/null 2>&1 &
         CHILDREN="$CHILDREN $!"
     fi
 }
@@ -398,8 +488,7 @@ for class in $CLASSES; do
     # The robot generates input through the remote desktop session of GNOME
     TEST_SESSION=
     case "$class" in
-        TestsDemo|RobotDemo|WindowsDemo|DialogsDemo|DragDropDemo|ClipboardDemo|Scene3DDemo|SwingDemo|\
-        TouchDemo|AccessibilityDemo)
+        TestsDemo)
             [ "$COMPOSITOR" = gnome ] && TEST_SESSION=-Dglass.gtk4.testSession=gnome ;;
     esac
     (run -Dprism.verbose=true -Djavafx.enablePreview=true \

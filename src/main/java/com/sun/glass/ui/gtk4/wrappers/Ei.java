@@ -182,6 +182,32 @@ public final class Ei {
         invoke(H.DEVICE_KEYBOARD_KEY, device, keycode, press);
     }
 
+    /** Whether this libei can emulate touch screens. */
+    public static boolean isTouchAvailable() {
+        return H.DEVICE_TOUCH_NEW != null && H.TOUCH_DOWN != null && H.TOUCH_MOTION != null && H.TOUCH_UP != null
+                && H.TOUCH_UNREF != null;
+    }
+
+    public static MemorySegment deviceTouchNew(MemorySegment device) {
+        return (MemorySegment) invoke(H.DEVICE_TOUCH_NEW, device);
+    }
+
+    public static void touchDown(MemorySegment touch, double x, double y) {
+        invoke(H.TOUCH_DOWN, touch, x, y);
+    }
+
+    public static void touchMotion(MemorySegment touch, double x, double y) {
+        invoke(H.TOUCH_MOTION, touch, x, y);
+    }
+
+    public static void touchUp(MemorySegment touch) {
+        invoke(H.TOUCH_UP, touch);
+    }
+
+    public static void touchUnref(MemorySegment touch) {
+        invoke(H.TOUCH_UNREF, touch);
+    }
+
     private static Object invoke(MethodHandle handle, Object... args) {
         if (handle == null) {
             throw new UnsupportedOperationException("libei is not available");
@@ -239,6 +265,11 @@ public final class Ei {
                 FunctionDescriptor.ofVoid(P, I, I));
         static final MethodHandle DEVICE_KEYBOARD_KEY = handle("ei_device_keyboard_key",
                 FunctionDescriptor.ofVoid(P, I, Z));
+        static final MethodHandle DEVICE_TOUCH_NEW = handle("ei_device_touch_new", FunctionDescriptor.of(P, P));
+        static final MethodHandle TOUCH_DOWN = handle("ei_touch_down", FunctionDescriptor.ofVoid(P, D, D));
+        static final MethodHandle TOUCH_MOTION = handle("ei_touch_motion", FunctionDescriptor.ofVoid(P, D, D));
+        static final MethodHandle TOUCH_UP = handle("ei_touch_up", FunctionDescriptor.ofVoid(P));
+        static final MethodHandle TOUCH_UNREF = handle("ei_touch_unref", FunctionDescriptor.of(P, P));
 
         private static MethodHandle handle(String name, FunctionDescriptor descriptor, Linker.Option... options) {
             if (LIB == null) {

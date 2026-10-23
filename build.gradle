@@ -483,7 +483,7 @@ def runArgs = { lib ->
     moduleArgs(lib) + [
         '--enable-native-access=javafx.graphics,ALL-UNNAMED',
         '-Dglass.platform=Gtk4',
-        '-Dprism.order=vk,sw',
+        '-Dprism.order=vk,gl,sw',
     ]
 }
 
