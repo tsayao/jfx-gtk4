@@ -1,4 +1,6 @@
-# jfx-gtk4
+# jfx-wayland
+
+JavaFX on Wayland.
 
 > [!WARNING]
 > Most of this code was developed by an AI model. It is meant for
@@ -117,7 +119,7 @@ from Maven Central, or an SDK built from source. It was tested with JavaFX
 - JavaFX of the version the plugin was built against (the plugin uses its
   internal APIs), with no `com.sun.glass.ui.gtk4` or `com.sun.prism.vk`
   classes in `javafx.graphics`
-- `jfx-gtk4.jar`, from `build/libs` (it contains the generated wrappers and
+- `jfx-wayland.jar`, from `build/libs` (it contains the generated wrappers and
   the SPIR-V shaders, so the GIR files, `vk.xml` and `libshaderc` are only
   needed to build it)
 - GTK 4.14 or later (`libgtk-4.so.1`), which has `GtkGraphicsOffload`: the
@@ -175,7 +177,7 @@ java --module-path=/path/to/javafx/lib --add-modules=javafx.controls \
      --add-exports=javafx.graphics/com.sun.prism.ps=ALL-UNNAMED \
      --add-exports=javafx.graphics/com.sun.prism.shader=ALL-UNNAMED \
      -Dglass.platform=Gtk4 -Dprism.order=vk,gl,sw \
-     -cp jfx-gtk4.jar:app.jar app.Main
+     -cp jfx-wayland.jar:app.jar app.Main
 ```
 
 The plugin is on the class path, so the exports are to `ALL-UNNAMED`. With
@@ -352,7 +354,7 @@ the plugin is built first with `./gradlew jar`.
 | `--list`, `--help`           | Lists the demos, or shows all the options                      |
 
 Arguments after `--` are passed to the JVM of the demos. The logs are written
-to `$TMPDIR/jfx-gtk4-launcher-<compositor>`.
+to `$TMPDIR/jfx-wayland-launcher-<compositor>`.
 
 With `--compositor=gnome`, GNOME Shell runs in a toolbox container, so that
 GNOME 51 can be used on an older host. When the container does not exist, the

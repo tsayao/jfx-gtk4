@@ -332,7 +332,7 @@ the words "Oracle designates this particular file as subject to the "Classpath"
 exception as provided by Oracle in the LICENSE file that accompanied this code."
 
 The same clarification and special exception applies to the source files of
-jfx-gtk4 where the copyright holder has expressly included in the particular
+jfx-wayland where the copyright holder has expressly included in the particular
 source file's header the words "The copyright holder designates this particular
 file as subject to the "Classpath" exception as provided in the LICENSE file
 that accompanied this code."

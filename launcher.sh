@@ -245,7 +245,7 @@ if [ "$COMPOSITOR" = gnome ]; then
     fi
 fi
 
-LOGS=${TMPDIR:-/tmp}/jfx-gtk4-launcher-$COMPOSITOR
+LOGS=${TMPDIR:-/tmp}/jfx-wayland-launcher-$COMPOSITOR
 [ "$COMPOSITOR" = gnome ] && LOGS=$LOGS-$TOOLBOX
 mkdir -p "$LOGS"
 
@@ -255,7 +255,7 @@ if [ "$COMPOSITOR" != none ] && [ -z "$LAUNCHER_SESSION" ]; then
     # a write to the user database also notifies the dconf clients of the host
     # (through XDG_RUNTIME_DIR/dconf), and the GNOME Shell of the host can crash
     # on that
-    printf 'user-db:jfx-gtk4-launcher\n' > "$LOGS/dconf-profile"
+    printf 'user-db:jfx-wayland-launcher\n' > "$LOGS/dconf-profile"
     export DCONF_PROFILE=$LOGS/dconf-profile
     relaunch dbus-run-session --
     exit $?

@@ -476,7 +476,7 @@ tasks.named('processResources') {
 }
 
 tasks.named('jar') {
-    archiveFileName = 'jfx-gtk4.jar'
+    archiveFileName = 'jfx-wayland.jar'
 }
 
 def runArgs = { lib ->
