@@ -22,6 +22,7 @@
 import javafx.animation.AnimationTimer;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
+import javafx.application.ConditionalFeature;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
@@ -43,6 +44,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Supplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * The showcases of the Prism renderer in one window, chosen in the middle of
@@ -134,6 +137,9 @@ public class EyeCandyDemo extends Application {
     private static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
+    /** Held, as the levels of loggers no longer referenced are lost. */
+    private static final List<Logger> QUIET = new ArrayList<>();
+
     private Stage stage;
     private Candy current;
 
@@ -141,8 +147,27 @@ public class EyeCandyDemo extends Application {
         launch(args);
     }
 
+    /**
+     * Without 3D, as with the software pipeline, the 3D parts of the candies
+     * do not show and JavaFX warns once for each 3D node: warn once instead.
+     */
+    private static void quiet3D() {
+        if (Platform.isSupported(ConditionalFeature.SCENE3D)) {
+            return;
+        }
+        System.err.println("EyeCandy: this pipeline has no 3D, so the 3D parts of the candies do not show");
+        for (String name : List.of("javafx.scene.shape.Shape3D", "javafx.scene.SubScene",
+                "javafx.scene.PerspectiveCamera", "javafx.scene.LightBase", "javafx.scene.paint.Material",
+                "javafx.scene.shape.Mesh")) {
+            Logger logger = Logger.getLogger(name);
+            logger.setLevel(Level.SEVERE);
+            QUIET.add(logger);
+        }
+    }
+
     @Override
     public void start(Stage stage) {
+        quiet3D();
         this.stage = stage;
         stage.initStyle(StageStyle.EXTENDED);
         stage.setMinWidth(1100);
