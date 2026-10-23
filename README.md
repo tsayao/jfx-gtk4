@@ -37,6 +37,10 @@ The build generates:
 - the Vulkan FFM bindings from `vk.xml` (`generateVulkanBindings`)
 - the Vulkan GLSL of the Prism and Decora shaders from JSL, compiled to SPIR-V
   (`generatePrismShaders`, `generateDecoraShaders`, `compile*SPIRVShaders`)
+- the OpenGL 4.5 core GLSL of the same shaders, from the `-gl` backend of the
+  JSL compiler, and of the static Vulkan shaders, whose descriptor sets, push
+  constants and specialization constants become bindings, a uniform block
+  and macros (`copy*GLShaders`, `generateGLStaticShaders`)
 
 ## Run
 
@@ -62,6 +66,15 @@ from Maven Central, or an SDK built from source. It was tested with JavaFX
   compositor as dma-bufs when the driver also has `VK_KHR_external_memory_fd`
   and `VK_EXT_external_memory_dma_buf`, and copied otherwise. Without Vulkan,
   `-Dprism.order=vk,sw` falls back to the software pipeline.
+- For the `gl` pipeline (`-Dprism.order=gl`): EGL 1.5 with the GBM platform,
+  `EGL_KHR_surfaceless_context` and `EGL_EXT_image_dma_buf_import`, and an
+  OpenGL 4.5 core driver with `GL_OES_EGL_image`, on a render node
+  (`/dev/dri/renderD128` and the next ones, or `-Dprism.gl.device=PATH`). It
+  renders with an upper-left origin and a [0, 1] depth range
+  (`glClipControl`), as Vulkan does, so both pipelines share their shaders,
+  projections and exported frames: linear ARGB8888 buffers of the render
+  node, synchronized with a sync file when `EGL_ANDROID_native_fence_sync` is
+  available. It does not use the ES2 pipeline of JavaFX.
 - A Wayland compositor (GNOME, KDE Plasma, ...). Xorg is not supported: the
   glass does not work in an X11 session, nor with `GDK_BACKEND=x11`.
 
@@ -74,7 +87,7 @@ These requirements are checked when JavaFX starts:
 - The `vk` pipeline prints why Vulkan cannot be used (no loader, no Vulkan 1.3
   device, no `VK_KHR_push_descriptor`, ...) and JavaFX tries the next pipeline
   of `prism.order`. `-Dprism.verbose=true` shows the devices and the
-  extensions in use.
+  extensions in use. The `gl` pipeline does the same for EGL and OpenGL.
 
 ### Command line
 
@@ -210,7 +223,7 @@ the plugin is built first with `./gradlew jar`.
 |------------------------------|-----------------------------------------------------------------|
 | `--apps=a,b,...`             | Demos to run, by name, or `all` (`nebula`)                     |
 | `--compositor=none\|gnome\|kwin` | Current desktop, or a nested compositor (`none`)        |
-| `--pipeline=vk\|sw`           | Prism pipeline (`vk`)                                          |
+| `--pipeline=vk\|gl\|sw`        | Prism pipeline: Vulkan, OpenGL 4.5 or software (`vk`)          |
 | `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |
 | `--toolbox=NAME`             | Toolbox container with GNOME 51 (`jfx-gnome51`), or `none` for the GNOME Shell of the host |
 | `--toolbox-release=N`        | Fedora release of a new toolbox container (`45`)               |

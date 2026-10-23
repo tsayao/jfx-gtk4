@@ -49,7 +49,7 @@
 #   --compositor=gnome|kwin|none
 #                           nested compositor, or none for the current
 #                           desktop (none)
-#   --pipeline=vk|sw        Prism pipeline (vk)
+#   --pipeline=vk|gl|sw     Prism pipeline: Vulkan, OpenGL 4.5 or software (vk)
 #   --backdrop=on|off       blur the area behind the windows (on)
 #   --toolbox=NAME          toolbox container with GNOME, or
 #                           "none" to use the GNOME Shell of the host
@@ -135,8 +135,8 @@ case "$COMPOSITOR" in
     *) echo "Unknown compositor: $COMPOSITOR (gnome, kwin or none)" >&2; exit 2 ;;
 esac
 case "$PIPELINE" in
-    vk|sw) ;;
-    *) echo "Unknown pipeline: $PIPELINE (vk or sw)" >&2; exit 2 ;;
+    vk|gl|sw) ;;
+    *) echo "Unknown pipeline: $PIPELINE (vk, gl or sw)" >&2; exit 2 ;;
 esac
 case "$BACKDROP" in
     on) BACKDROP_OPTION=-Dglass.gtk4.backdrop=true ;;
