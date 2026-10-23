@@ -223,6 +223,8 @@ final class GLNative {
         private static final MethodHandle EGLCREATESYNCKHR = proc("eglCreateSyncKHR", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, ADDRESS), false);
         private static final MethodHandle EGLDESTROYSYNCKHR = proc("eglDestroySyncKHR", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), false);
         private static final MethodHandle EGLDUPNATIVEFENCEFDANDROID = proc("eglDupNativeFenceFDANDROID", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), false);
+        private static final MethodHandle EGLQUERYDISPLAYATTRIBEXT = proc("eglQueryDisplayAttribEXT", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS), false);
+        private static final MethodHandle EGLQUERYDEVICESTRINGEXT = proc("eglQueryDeviceStringEXT", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT), false);
 
         static MemorySegment eglCreateImageKHR(MemorySegment a0, MemorySegment a1, int a2, MemorySegment a3, MemorySegment a4) {
             try {
@@ -261,6 +263,22 @@ final class GLNative {
                 return (int) EGLDUPNATIVEFENCEFDANDROID.invokeExact(a0, a1);
             } catch (Throwable t) {
                 throw failure("eglDupNativeFenceFDANDROID", t);
+            }
+        }
+
+        static int eglQueryDisplayAttribEXT(MemorySegment a0, int a1, MemorySegment a2) {
+            try {
+                return (int) EGLQUERYDISPLAYATTRIBEXT.invokeExact(a0, a1, a2);
+            } catch (Throwable t) {
+                throw failure("eglQueryDisplayAttribEXT", t);
+            }
+        }
+
+        static MemorySegment eglQueryDeviceStringEXT(MemorySegment a0, int a1) {
+            try {
+                return (MemorySegment) EGLQUERYDEVICESTRINGEXT.invokeExact(a0, a1);
+            } catch (Throwable t) {
+                throw failure("eglQueryDeviceStringEXT", t);
             }
         }
     }

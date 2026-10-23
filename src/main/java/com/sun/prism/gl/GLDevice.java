@@ -174,6 +174,7 @@ final class GLDevice {
     private static final int EGL_RENDERABLE_TYPE = 0x3040;
     private static final int EGL_OPENGL_BIT = 0x0008;
     private static final int EGL_CONFIG_CAVEAT = 0x3027;
+    private static final int EGL_DEVICE_EXT = 0x322C;
     private static final int EGL_LINUX_DMA_BUF_EXT = 0x3270;
     private static final int EGL_WIDTH = 0x3057;
     private static final int EGL_HEIGHT = 0x3056;
@@ -342,6 +343,24 @@ final class GLDevice {
     }
 
     /**
+     * Whether the device of the display is a software rasterizer, as far as
+     * EGL_EXT_device_query tells.
+     */
+    private boolean isSoftware(MemorySegment d) {
+        MemorySegment s = EGL.eglQueryString(MemorySegment.NULL, EGL_EXTENSIONS);
+        if (s.address() == 0 || !s.reinterpret(Long.MAX_VALUE).getString(0).contains("EGL_EXT_device_query")) {
+            return false;
+        }
+        MemorySegment device = arena.allocate(ADDRESS);
+        if (EGLX.eglQueryDisplayAttribEXT(d, EGL_DEVICE_EXT, device) == 0) {
+            return false;
+        }
+        MemorySegment extensions = EGLX.eglQueryDeviceStringEXT(device.get(ADDRESS, 0), EGL_EXTENSIONS);
+        return extensions.address() != 0
+                && extensions.reinterpret(Long.MAX_VALUE).getString(0).contains("EGL_MESA_device_software");
+    }
+
+    /**
      * Opens the first hardware render node on which GBM and EGL work, or
      * the one of -Dprism.gl.device.
      */
@@ -372,13 +391,16 @@ final class GLDevice {
                 reasons.append(node).append(": no EGL display; ");
                 continue;
             }
-            // Software rasterizers such as llvmpipe only have slow configs,
-            // and Prism sw is faster than them
+            // Software rasterizers such as llvmpipe are slower than Prism sw.
+            // Mesa does not mark their configs as slow, but their device is
+            // EGL_MESA_device_software, as when the render node has no 3D
+            // driver and GBM falls back to kms_swrast
             MemorySegment attribs = arena.allocateFrom(JAVA_INT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
                     EGL_CONFIG_CAVEAT, EGL_NONE, EGL_NONE);
             MemorySegment configs = arena.allocate(ADDRESS);
             MemorySegment count = arena.allocate(JAVA_INT);
-            if (EGL.eglChooseConfig(d, attribs, configs, 1, count) == 0 || count.get(JAVA_INT, 0) < 1) {
+            if (EGL.eglChooseConfig(d, attribs, configs, 1, count) == 0 || count.get(JAVA_INT, 0) < 1
+                    || isSoftware(d)) {
                 EGL.eglTerminate(d);
                 GBM.gbm_device_destroy(g);
                 LibC.close(fd);
