@@ -244,6 +244,13 @@ be removed.
 
 ![Nebula, Fireworks, Disco and Aurora](docs/images/eyecandy.jpg)
 
+On KDE Plasma (`./launcher.sh --compositor=kde`), the windows are
+`GtkWindow`s with the Breeze theme of GTK instead of libadwaita:
+
+![Nebula on KDE Plasma](docs/images/plasma-eyecandy.jpg)
+
+![The tests app on KDE Plasma](docs/images/plasma-tests.jpg)
+
 ## Tests
 
 `tests` runs the tests of the GTK 4 glass and of the Prism pipelines, in a

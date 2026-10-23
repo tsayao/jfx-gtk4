@@ -96,6 +96,10 @@
 #   ./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
+# The first launcher, which the relaunched ones in the toolbox container and
+# the private session (which see the processes of the host) end with
+: "${LAUNCHER_OWNER:=$$}"
+export LAUNCHER_OWNER
 DEMOS=$ROOT/demos
 
 APPS=eyecandy
@@ -163,7 +167,7 @@ case "$COMPOSITOR" in
     hyprland)
         : "${TOOLBOX:=jfx-hyprland}" "${TOOLBOX_RELEASE:=rawhide}"
         TOOLBOX_COPR=lionheartp/Hyprland
-        TOOLBOX_PACKAGES="hyprland xdg-desktop-portal-hyprland $TOOLBOX_PACKAGES" ;;
+        TOOLBOX_PACKAGES="hyprland hyprland-guiutils xdg-desktop-portal-hyprland $TOOLBOX_PACKAGES" ;;
     none) ;;
     *) echo "Unknown compositor: $COMPOSITOR (gnome, kde, hyprland or none)" >&2; exit 2 ;;
 esac
@@ -279,7 +283,8 @@ fi
 if [ "$COMPOSITOR" != none ]; then
     if [ "$TOOLBOX" != none ] && [ ! -f /run/.toolboxenv ]; then
         ensure_toolbox
-        relaunch toolbox run --container "$TOOLBOX" env GDK_DISABLE="$GDK_DISABLE" GSK_DEBUG="$GSK_DEBUG"
+        relaunch toolbox run --container "$TOOLBOX" env GDK_DISABLE="$GDK_DISABLE" GSK_DEBUG="$GSK_DEBUG" \
+            LAUNCHER_OWNER="$LAUNCHER_OWNER"
         exit $?
     fi
 fi
@@ -545,15 +550,18 @@ start_kde() {
 }
 
 start_hyprland() {
-    cat > "$LOGS/hyprland.conf" <<EOF
-monitor = , $SIZE, auto, $SCALE
-misc {
-    disable_hyprland_logo = true
-    disable_splash_rendering = true
-}
+    # The Lua configuration, as Hyprland 0.57 drops the .conf one
+    cat > "$LOGS/hyprland.lua" <<EOF
+hl.monitor({ output = "", mode = "$SIZE", position = "auto", scale = $SCALE })
+hl.config({
+    misc = {
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+    },
+})
 EOF
     export XDG_CURRENT_DESKTOP=Hyprland
-    (exec start-hyprland -- --config "$LOGS/hyprland.conf") > "$LOGS/hyprland.log" 2>&1 &
+    (exec start-hyprland -- --config "$LOGS/hyprland.lua") > "$LOGS/hyprland.log" 2>&1 &
     watchdog=$!
     CHILDREN="$CHILDREN $watchdog"
     # Hyprland names its socket itself, and writes it in the lock of its
@@ -614,5 +622,11 @@ if [ "$COMPOSITOR" = none ]; then
     echo "Running$CLASSES on the current desktop ($PIPELINE), logs in $LOGS"
 else
     echo "Running$CLASSES on $COMPOSITOR ($PIPELINE), logs in $LOGS"
+fi
+# A signal to the first launcher does not reach the relaunched ones
+if [ "$LAUNCHER_OWNER" != $$ ]; then
+    (while kill -0 "$LAUNCHER_OWNER" 2>/dev/null; do sleep 1; done
+     kill -TERM $$) > /dev/null 2>&1 &
+    CHILDREN="$CHILDREN $!"
 fi
 wait $PIDS

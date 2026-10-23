@@ -52,11 +52,35 @@ final class Gtk4CssUtils {
               background: none;
               box-shadow: none;
             }
+            .jfx-header-controls {
+              background-color: transparent;
+              background: none;
+              border: none;
+              box-shadow: none;
+              min-height: 0;
+              margin: 0;
+              padding: 0;
+            }
             window.jfx-dark windowcontrols > button {
               color: #ffffff;
             }
             window.jfx-light windowcontrols > button {
               color: rgba(0, 0, 6, 0.8);
+            }
+            /* Themes such as Breeze draw dark icons of their own as the
+               background of the buttons: show the symbolic icons instead */
+            window.jfx-dark .jfx-header-controls windowcontrols > button {
+              background-image: none;
+              border-radius: 9999px;
+            }
+            window.jfx-dark .jfx-header-controls windowcontrols > button image {
+              color: #ffffff;
+            }
+            window.jfx-dark .jfx-header-controls windowcontrols > button:hover {
+              background-color: rgba(255, 255, 255, 0.15);
+            }
+            window.jfx-dark .jfx-header-controls windowcontrols > button:active {
+              background-color: rgba(255, 255, 255, 0.25);
             }
             popover.jfx-popover,
             popover.jfx-popover > contents {

@@ -217,6 +217,9 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         super(owner, screen, styleMask);
         if (isExtendedWindow()) {
             headerButtonHeightProperty().subscribe(this::onHeaderButtonHeightChanged);
+            // The color scheme of the stage, which JavaFX 27 gives here rather
+            // than through setDarkFrame
+            headerButtonDarkStyleProperty().subscribe(this::setDarkFrame);
         }
     }
 
@@ -434,14 +437,10 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
                 overlay.setChild(containerWidget);
 
                 GtkWindowControls start = GtkWindowControls.create(Gtk.PACK_START);
-                start.setHAlign(Gtk.ALIGN_START);
-                start.setVAlign(Gtk.ALIGN_START);
-                overlay.addOverlay(start);
+                overlay.addOverlay(headerControls(start, Gtk.ALIGN_START));
 
                 GtkWindowControls end = GtkWindowControls.create(Gtk.PACK_END);
-                end.setHAlign(Gtk.ALIGN_END);
-                end.setVAlign(Gtk.ALIGN_START);
-                overlay.addOverlay(end);
+                overlay.addOverlay(headerControls(end, Gtk.ALIGN_END));
 
                 nativeHeaderControlsStart = start;
                 nativeHeaderControlsEnd = end;
@@ -454,6 +453,26 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
                 setWindowContent(containerWidget);
             }
         }
+    }
+
+    /**
+     * Places window controls in a corner over the content. Themes other than
+     * Adwaita, such as Breeze, style the buttons only inside a title bar, so
+     * there the controls get one, without its background.
+     */
+    private static GtkWidget headerControls(GtkWindowControls controls, int halign) {
+        controls.setHAlign(halign);
+        controls.setVAlign(Gtk.ALIGN_START);
+        if (Gtk4Application.ADWAITA) {
+            return controls;
+        }
+        GtkBox titlebar = GtkBox.create(Gtk.ORIENTATION_HORIZONTAL, 0);
+        titlebar.addCssClass("titlebar");
+        titlebar.addCssClass("jfx-header-controls");
+        titlebar.setHAlign(halign);
+        titlebar.setVAlign(Gtk.ALIGN_START);
+        titlebar.append(controls);
+        return titlebar;
     }
 
     private void setWindowContent(GtkWidget content) {
