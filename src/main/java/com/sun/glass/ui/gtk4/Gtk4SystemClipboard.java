@@ -100,6 +100,11 @@ final class Gtk4SystemClipboard extends SystemClipboard implements Gtk4DataTrans
         return Gtk4DataTransfer.getMimeTypes(this);
     }
 
+    @Override
+    public String[] getMimeTypes() {
+        return Gtk4DataTransfer.rawImageFirst(super.getMimeTypes());
+    }
+
     // Gtk4DataTransfer.Source
 
     @Override

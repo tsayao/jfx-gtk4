@@ -48,6 +48,7 @@ import javafx.scene.image.WritableImage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.DataFormat;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.BorderPane;
@@ -112,6 +113,10 @@ import java.util.stream.Collectors;
  * reads the clipboard through the platform and reports what it got. Wayland
  * gives the clipboard only to the focused window, so click the reader window
  * if it does not get the focus by itself.
+ * <p>
+ * Its tests (see TestKit) run that check, copy and paste in the text controls
+ * with the robot, and exchange text and images with wl-copy and wl-paste of
+ * wl-clipboard when they are installed.
  */
 public class ClipboardDemo extends Application {
 
@@ -159,7 +164,7 @@ public class ClipboardDemo extends Application {
         .status { -fx-background-radius: 999; -fx-padding: 1 9 1 9; -fx-font-size: 10px; -fx-font-weight: bold; }
         .status.idle { -fx-background-color: rgba(255, 255, 255, 0.07); -fx-text-fill: #93a1b8; }
         .status.running { -fx-background-color: rgba(20, 184, 166, 0.35); -fx-text-fill: #99f6e4; }
-        .status.pass { -fx-background-color: rgba(34, 197, 94, 0.25); -fx-text-fill: #86efac; }
+        .status.ok { -fx-background-color: rgba(34, 197, 94, 0.25); -fx-text-fill: #86efac; }
         .status.fail { -fx-background-color: rgba(244, 63, 94, 0.25); -fx-text-fill: #fda4af; }
         .check-box > .box {
             -fx-background-color: rgba(255, 255, 255, 0.08);
@@ -203,13 +208,14 @@ public class ClipboardDemo extends Application {
         .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-shape: " "; -fx-padding: 0; }
         """;
 
-    private static final String STYLESHEET = "data:text/css;base64,"
+    static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
     private static final String READER = "--reader";
     private static final String REPORT = "CLIPBOARD ";
     private static final String REPORT_END = "CLIPBOARD-END";
-    private static final long READER_TIMEOUT_S = 60;
+    private static final String REPORT_WINDOW = "CLIPBOARD-WINDOW ";
+    private static final long READER_TIMEOUT_S = 30;
     private static final int LOG_SIZE = 300;
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
 
@@ -227,6 +233,8 @@ public class ClipboardDemo extends Application {
     private static final DataFormat CUSTOM_BYTES = format("application/octet-stream");
     private static final DataFormat CUSTOM_OBJECT = format("application/x-jfx-clipboard-demo-object");
     private static final DataFormat JSON = format("application/json");
+    // Marks the copies of the tests, to find them in the list of wl-paste
+    private static final DataFormat OWNER = format("application/x-jfx-clipboard-demo-owner");
 
     public record Sample(String name, int[] values, double ratio) implements Serializable {
         @Override
@@ -255,30 +263,22 @@ public class ClipboardDemo extends Application {
     private final Map<String, Label[]> checks = new LinkedHashMap<>();
     private final Label summary = new Label("Not run");
     private final Button crossProcess = new Button("Check in another process");
+    private final TextField textField = new TextField("Select, Ctrl+C, Ctrl+X, Ctrl+V");
+    private final TextArea textArea = new TextArea(UNICODE);
     private Set<DataFormat> lastTypes = Set.of();
+    final TestKit.Suite suite = new TestKit.Suite("Clipboard");
+    private TestKit.Test crossTest;
 
     @Override
     public void start(Stage stage) {
-        if (getParameters().getUnnamed().contains(READER)) {
+        if (isReader(getParameters().getUnnamed())) {
             startReader(stage);
             return;
         }
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
         stage.initStyle(StageStyle.EXTENDED);
-
         BorderPane body = new BorderPane();
         body.setTop(header());
-        VBox left = column(copyCard(), textCard());
-        VBox middle = column(viewerCard());
-        VBox right = column(checksCard(), logCard());
-        HBox columns = new HBox(14);
-        for (VBox c : List.of(left, middle, right)) {
-            HBox.setHgrow(c, Priority.ALWAYS);
-            c.setPrefWidth(1);
-            columns.getChildren().add(c);
-        }
-        columns.setPadding(new Insets(4, 18, 18, 18));
-        body.setCenter(columns);
+        body.setCenter(content(stage));
 
         StackPane root = new StackPane(backgroundLayer(), body);
         Rectangle2D screen = Screen.getPrimary().getVisualBounds();
@@ -291,6 +291,41 @@ public class ClipboardDemo extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(620);
         stage.show();
+        TestKit.autorun(suite);
+    }
+
+    /**
+     * Whether the application arguments ask for the reader of the
+     * cross-process check.
+     */
+    static boolean isReader(List<String> args) {
+        return args.contains(READER);
+    }
+
+    /**
+     * The lab without its header bar, which the tests launcher shows in a tab.
+     */
+    Region content(Stage stage) {
+        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        defineTests();
+        suite.setBeforeRun(() -> {
+            stage.toFront();
+            stage.requestFocus();
+        });
+        VBox left = column(copyCard(), textCard());
+        VBox middle = column(viewerCard());
+        VBox right = column(testsCard(), checksCard(), logCard());
+        HBox columns = new HBox(14);
+        for (VBox c : List.of(left, middle, right)) {
+            HBox.setHgrow(c, Priority.ALWAYS);
+            c.setPrefWidth(1);
+            columns.getChildren().add(c);
+        }
+        columns.setPadding(new Insets(4, 18, 18, 18));
+        ScrollPane scroll = new ScrollPane(columns);
+        scroll.setFitToWidth(true);
+        scroll.setFitToHeight(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 
         Timeline poll = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
             if (watch.isSelected() && stage.isFocused()) {
@@ -309,6 +344,7 @@ public class ClipboardDemo extends Application {
             }
         });
         readClipboard();
+        return scroll;
     }
 
     private static DataFormat format(String mime) {
@@ -520,8 +556,8 @@ public class ClipboardDemo extends Application {
     // Text controls
 
     private Node textCard() {
-        TextField field = new TextField("Select, Ctrl+C, Ctrl+X, Ctrl+V");
-        TextArea area = new TextArea(UNICODE);
+        TextField field = textField;
+        TextArea area = textArea;
         area.setPrefRowCount(4);
         Label hint = muted("The text controls copy and paste through the same clipboard: paste here what "
                 + "other applications copied, and copy from here to them.");
@@ -652,7 +688,8 @@ public class ClipboardDemo extends Application {
 
     private Node checksCard() {
         crossProcess.getStyleClass().add("accent");
-        crossProcess.setOnAction(e -> checkInAnotherProcess());
+        crossProcess.disableProperty().bind(TestKit.busyProperty());
+        crossProcess.setOnAction(e -> suite.runAsync(List.of(crossTest)));
         summary.setWrapText(true);
         HBox top = new HBox(12, crossProcess, summary);
         top.setAlignment(Pos.CENTER_LEFT);
@@ -691,71 +728,79 @@ public class ClipboardDemo extends Application {
         };
     }
 
-    private void checkInAnotherProcess() {
+    /**
+     * Copies Everything, starts the reader and compares what it read, on the
+     * test thread.
+     */
+    private String checkInAnotherProcess() throws Exception {
         List<String> command = readerCommand();
         if (command == null) {
-            summary.setText("Cannot find the command line of this process");
-            return;
+            TestKit.skip("Cannot find the command line of this process");
         }
-        ClipboardContent content = new ClipboardContent();
-        fillEverything(content);
-        Clipboard.getSystemClipboard().setContent(content);
-        readClipboard();
+        claim(this::fillEverything);
         // While this process owns the clipboard, it reads back from the JavaFX cache: the expected values
-        Map<String, String> expected = report(Clipboard.getSystemClipboard());
-
-        checks.values().forEach(l -> setStatus(l, "running", "WAITING", ""));
-        summary.setText("Waiting for the reader…");
-        crossProcess.setDisable(true);
-        log("Starting the reader: " + String.join(" ", command));
-        Thread.ofPlatform().daemon().name("clipboard-reader").start(() -> {
-            Map<String, String> actual = new TreeMap<>();
-            String error = null;
-            try {
-                Process process = new ProcessBuilder(command)
-                        .redirectError(ProcessBuilder.Redirect.INHERIT)
-                        .start();
-                try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream(),
-                        StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = in.readLine()) != null) {
-                        if (line.equals(REPORT_END)) {
-                            break;
-                        }
-                        if (line.startsWith(REPORT)) {
-                            String[] kv = line.substring(REPORT.length()).split(" ", 2);
-                            actual.put(kv[0], kv.length > 1 ? kv[1] : "");
-                        }
-                    }
-                }
-                if (!process.waitFor(READER_TIMEOUT_S, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    error = "The reader did not finish";
-                }
-            } catch (IOException | InterruptedException ex) {
-                error = ex.toString();
-            }
-            String failure = error;
-            Platform.runLater(() -> showCrossProcess(expected, actual, failure));
+        Map<String, String> expected = fx(() -> {
+            readClipboard();
+            checks.values().forEach(l -> setStatus(l, "running", "WAITING", ""));
+            summary.setText("Waiting for the reader…");
+            log("Starting the reader: " + String.join(" ", command));
+            return report(Clipboard.getSystemClipboard());
         });
+        Map<String, String> actual = new TreeMap<>();
+        ProcessBuilder builder = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT);
+        if ("Gtk4".equalsIgnoreCase(System.getProperty("glass.platform"))) {
+            // AWT sets GDK_BACKEND=x11 in this process when Swing starts, as in the tests
+            // launcher, and the GTK 4 glass of the reader needs Wayland
+            builder.environment().put("GDK_BACKEND", "wayland");
+        }
+        Process process = builder.start();
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream(),
+                StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = in.readLine()) != null) {
+                if (line.equals(REPORT_END)) {
+                    break;
+                }
+                if (line.startsWith(REPORT_WINDOW) && TestKit.robotInput()) {
+                    String[] b = line.substring(REPORT_WINDOW.length()).split(" ");
+                    TestKit.pause(400);
+                    TestKit.click(new javafx.geometry.Point2D(Double.parseDouble(b[0]) + Double.parseDouble(b[2]) / 2,
+                            Double.parseDouble(b[1]) + Double.parseDouble(b[3]) / 2));
+                }
+                if (line.startsWith(REPORT)) {
+                    String[] kv = line.substring(REPORT.length()).split(" ", 2);
+                    actual.put(kv[0], kv.length > 1 ? kv[1] : "");
+                }
+            }
+        }
+        if (!process.waitFor(READER_TIMEOUT_S, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            fx(() -> summary.setText("The reader did not finish"));
+            throw new AssertionError("The reader did not finish");
+        }
+        List<String> failed = fx(() -> showCrossProcess(expected, actual));
+        TestKit.check(failed.isEmpty(), "read differently by the reader: " + String.join(", ", failed)
+                + " (it read " + (actual.isEmpty() ? "nothing" : actual.keySet()) + ")");
+        return expected.size() + " formats read the same by the reader";
     }
 
-    private void showCrossProcess(Map<String, String> expected, Map<String, String> actual, String error) {
-        crossProcess.setDisable(false);
-        int passed = 0;
+    private List<String> showCrossProcess(Map<String, String> expected, Map<String, String> actual) {
+        List<String> failed = new ArrayList<>();
         for (Map.Entry<String, Label[]> e : checks.entrySet()) {
             String want = expected.get(e.getKey());
             String got = actual.get(e.getKey());
             boolean ok = want != null && want.equals(got);
-            if (ok) {
-                passed++;
+            if (!ok) {
+                failed.add(label(e.getKey()));
             }
-            setStatus(e.getValue(), ok ? "pass" : "fail", ok ? "PASS" : "FAIL",
+            setStatus(e.getValue(), ok ? "ok" : "fail", ok ? "OK" : "FAIL",
                     ok ? got : "expected " + want + ", read " + got);
-            log((ok ? "PASS " : "FAIL ") + label(e.getKey()) + (ok ? "" : ": expected " + want + ", read " + got));
+            log((ok ? "OK   " : "FAIL ") + label(e.getKey()) + (ok ? "" : ": expected " + want + ", read " + got));
         }
-        summary.setText(error != null ? error : passed + " of " + checks.size() + " formats match");
-        summary.setTextFill(Color.web(error == null && passed == checks.size() ? "#86efac" : "#fda4af"));
+        int passed = checks.size() - failed.size();
+        summary.setText(passed + " of " + checks.size() + " formats match");
+        summary.setTextFill(Color.web(failed.isEmpty() ? "#86efac" : "#fda4af"));
+        return failed;
     }
 
     private static void setStatus(Label[] labels, String style, String text, String detail) {
@@ -776,7 +821,8 @@ public class ClipboardDemo extends Application {
         }
         List<String> command = new ArrayList<>();
         command.add(info.command().get());
-        command.addAll(Arrays.asList(info.arguments().get()));
+        // Not the options that run the tests
+        Arrays.stream(info.arguments().get()).filter(a -> !a.startsWith("-Dtests.")).forEach(command::add);
         command.add(READER);
         return command;
     }
@@ -843,9 +889,268 @@ public class ClipboardDemo extends Application {
     }
 
     // ---------------------------------------------------------------------
+    // Tests
+
+    private Node testsCard() {
+        return card("Tests", suite.view());
+    }
+
+    private void defineTests() {
+        crossTest = suite.auto("Cross-process", "Copies Everything and reads it in a second process",
+                this::checkInAnotherProcess);
+        suite.robot("Ctrl+C and Ctrl+V", "Copies the text field with the keyboard and pastes it in the text area",
+                () -> {
+                    String text = "Robot clipboard " + System.nanoTime() % 100000;
+                    fx(() -> textField.setText(text));
+                    TestKit.click(textField);
+                    await("the text field focused", textField::isFocused);
+                    TestKit.shortcut(KeyCode.A, KeyCode.CONTROL);
+                    TestKit.shortcut(KeyCode.C, KeyCode.CONTROL);
+                    await("the text on the clipboard", () -> text.equals(Clipboard.getSystemClipboard().getString()));
+                    fx(() -> textArea.clear());
+                    TestKit.click(textArea);
+                    await("the text area focused", textArea::isFocused);
+                    TestKit.shortcut(KeyCode.V, KeyCode.CONTROL);
+                    await("the pasted text", () -> textArea.getText().equals(text));
+                    fx(() -> textArea.setText(UNICODE));
+                    return "\"" + text + "\"";
+                });
+        suite.auto("Paste in another application", "Copies Everything and reads it with wl-paste", () -> {
+            requireWlClipboard();
+            claim(this::fillEverything);
+            List<String> types = List.of(new String(run(null, "wl-paste", "--list-types"), StandardCharsets.UTF_8)
+                    .split("\n"));
+            for (String want : List.of("text/plain;charset=utf-8", "text/html", "text/rtf", "text/uri-list",
+                    "image/png", mime(CUSTOM_TEXT), mime(JSON))) {
+                TestKit.check(types.contains(want), "wl-paste does not list " + want + ": " + types);
+            }
+            String text = new String(run(null, "wl-paste", "--no-newline", "--type", "text/plain;charset=utf-8"),
+                    StandardCharsets.UTF_8);
+            TestKit.check(text.equals(UNICODE), "wl-paste read the text as " + digest(text) + ", expected "
+                    + digest(UNICODE));
+            Image image = new Image(new java.io.ByteArrayInputStream(run(null, "wl-paste", "--type", "image/png")));
+            TestKit.check(!image.isError(), "wl-paste read an image that does not decode");
+            TestKit.check(imageDigest(image).equals(imageDigest(stripes())), "wl-paste read the image as "
+                    + imageDigest(image) + ", expected " + imageDigest(stripes()));
+            String uris = new String(run(null, "wl-paste", "--no-newline", "--type", "text/uri-list"),
+                    StandardCharsets.UTF_8);
+            TestKit.check(uris.contains("https://openjfx.io/") && uris.contains("file://"),
+                    "wl-paste read the URIs as " + uris);
+            return types.size() + " types, text, image and URIs match";
+        });
+        suite.auto("Large text in another application", "Copies 1 MiB of text and reads it with wl-paste", () -> {
+            requireWlClipboard();
+            String large = largeText();
+            claim(c -> c.putString(large));
+            String text = new String(run(null, "wl-paste", "--no-newline", "--type", "text/plain;charset=utf-8"),
+                    StandardCharsets.UTF_8);
+            TestKit.check(text.equals(large), "wl-paste read " + digest(text) + ", expected " + digest(large));
+            return digest(text);
+        });
+        suite.auto("Clear", "Clears the clipboard, which wl-paste must see empty", () -> {
+            requireWlClipboard();
+            claim(c -> c.putString("Cleared next"));
+            fx(() -> Clipboard.getSystemClipboard().clear());
+            Process p = new ProcessBuilder("wl-paste", "--list-types").redirectErrorStream(true).start();
+            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            p.waitFor(10, TimeUnit.SECONDS);
+            TestKit.check(p.exitValue() != 0, "wl-paste still lists " + out);
+            fx(this::readClipboard);
+            return out;
+        });
+        suite.auto("Copy from another application", "Copies text and then an image with wl-copy and reads them",
+                () -> {
+                    requireWlClipboard();
+                    String text = "From wl-copy: Olá 😀 " + System.nanoTime() % 100000;
+                    Process textCopy = wlCopy(text.getBytes(StandardCharsets.UTF_8), "text/plain;charset=utf-8");
+                    try {
+                        await("the text of wl-copy", 5000,
+                                () -> text.equals(Clipboard.getSystemClipboard().getString()));
+                    } finally {
+                        textCopy.destroy();
+                    }
+                    Process imageCopy = wlCopy(pngOf(stripes()), "image/png");
+                    try {
+                        Set<String> before = tempFiles();
+                        await("the image of wl-copy", 5000, () -> Clipboard.getSystemClipboard().hasImage()
+                                && !Clipboard.getSystemClipboard().hasString());
+                        Image image = fx(() -> Clipboard.getSystemClipboard().getImage());
+                        Set<String> leftovers = tempFiles();
+                        leftovers.removeAll(before);
+                        TestKit.check(image != null, "the image could not be read");
+                        TestKit.check(imageDigest(image).equals(imageDigest(stripes())), "the image reads as "
+                                + imageDigest(image) + ", expected " + imageDigest(stripes()));
+                        TestKit.check(leftovers.isEmpty(), "reading the image left temporary files: " + leftovers);
+                        fx(this::readClipboard);
+                        return "text and " + imageDigest(image);
+                    } finally {
+                        // The selection goes away with wl-copy, so that the next copies of this window count
+                        imageCopy.destroy();
+                    }
+                });
+    }
+
+    /**
+     * Copies content and makes sure that the compositor made it the
+     * selection, which wl-paste shows. The compositor keeps the selection of
+     * another client that is newer than the last input to this window, so
+     * with the robot this clicks the window first, and without it the test is
+     * skipped.
+     */
+    private void claim(Consumer<ClipboardContent> filler) throws Exception {
+        Runnable copy = () -> {
+            ClipboardContent c = new ClipboardContent();
+            filler.accept(c);
+            c.put(OWNER, "owner");
+            Clipboard.getSystemClipboard().setContent(c);
+        };
+        awaitFocus();
+        fx(copy);
+        if (!hasWlClipboard() || ownsSelection()) {
+            return;
+        }
+        if (!TestKit.robotInput()) {
+            TestKit.skip("Another application owns the clipboard since the last input to this window, so the "
+                    + "compositor ignores the copy: run with the robot, or click the window and run again");
+        }
+        TestKit.click(viewerTitle);
+        awaitFocus();
+        fx(copy);
+        TestKit.check(ownsSelection(), "the compositor ignores the copy of this window, even after a click");
+    }
+
+    private static boolean ownsSelection() throws IOException, InterruptedException {
+        Process p = new ProcessBuilder("wl-paste", "--list-types").redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        p.waitFor(10, TimeUnit.SECONDS);
+        return out.lines().anyMatch(mime(OWNER)::equals);
+    }
+
+    /**
+     * Waits for the focus to come back after a helper window took it: the
+     * compositor ignores the clipboard of a window without the focus.
+     */
+    private void awaitFocus() {
+        await("the focus of the window", 5000, () -> textField.getScene() != null
+                && textField.getScene().getWindow().isFocused());
+    }
+
+    private static void requireWlClipboard() {
+        if (!hasWlClipboard()) {
+            TestKit.skip("wl-clipboard is not installed (wl-copy and wl-paste)");
+        }
+    }
+
+    private static boolean hasWlClipboard() {
+        for (String dir : System.getenv().getOrDefault("PATH", "").split(File.pathSeparator)) {
+            if (Files.isExecutable(Path.of(dir, "wl-paste")) && Files.isExecutable(Path.of(dir, "wl-copy"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Runs a command with the given input and returns its output, failing
+     * when it does not exit with 0.
+     */
+    private static byte[] run(byte[] input, String... command) throws IOException, InterruptedException {
+        Process p = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+        if (input != null) {
+            try (var out = p.getOutputStream()) {
+                out.write(input);
+            }
+        } else {
+            p.getOutputStream().close();
+        }
+        byte[] output = p.getInputStream().readAllBytes();
+        if (!p.waitFor(10, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            throw new AssertionError(String.join(" ", command) + " did not finish");
+        }
+        TestKit.check(p.exitValue() == 0, String.join(" ", command) + " exited with " + p.exitValue());
+        return output;
+    }
+
+    /**
+     * Starts wl-copy in the foreground, serving the data until it is
+     * destroyed.
+     */
+    private static Process wlCopy(byte[] data, String mime) throws IOException {
+        Process p = new ProcessBuilder("wl-copy", "--foreground", "--type", mime)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .start();
+        try (var out = p.getOutputStream()) {
+            out.write(data);
+        }
+        return p;
+    }
+
+    private static byte[] pngOf(Image image) {
+        // A PNG of an opaque image, without java.desktop: stored (uncompressed) deflate blocks
+        int w = (int) image.getWidth(), h = (int) image.getHeight();
+        java.io.ByteArrayOutputStream raw = new java.io.ByteArrayOutputStream();
+        PixelReader pr = image.getPixelReader();
+        for (int y = 0; y < h; y++) {
+            raw.write(0);
+            for (int x = 0; x < w; x++) {
+                int argb = pr.getArgb(x, y);
+                raw.write(argb >> 16);
+                raw.write(argb >> 8);
+                raw.write(argb);
+            }
+        }
+        java.util.zip.Deflater deflater = new java.util.zip.Deflater();
+        deflater.setInput(raw.toByteArray());
+        deflater.finish();
+        java.io.ByteArrayOutputStream z = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[65536];
+        while (!deflater.finished()) {
+            z.write(buf, 0, deflater.deflate(buf));
+        }
+        deflater.end();
+        ByteBuffer ihdr = ByteBuffer.allocate(13).putInt(w).putInt(h).put((byte) 8).put((byte) 2)
+                .put((byte) 0).put((byte) 0).put((byte) 0);
+        java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+        png.writeBytes(new byte[] {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'});
+        chunk(png, "IHDR", ihdr.array());
+        chunk(png, "IDAT", z.toByteArray());
+        chunk(png, "IEND", new byte[0]);
+        return png.toByteArray();
+    }
+
+    private static void chunk(java.io.ByteArrayOutputStream out, String type, byte[] data) {
+        byte[] t = type.getBytes(StandardCharsets.US_ASCII);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(t);
+        crc.update(data);
+        out.writeBytes(ByteBuffer.allocate(4).putInt(data.length).array());
+        out.writeBytes(t);
+        out.writeBytes(data);
+        out.writeBytes(ByteBuffer.allocate(4).putInt((int) crc.getValue()).array());
+    }
+
+    private static void fx(Runnable r) {
+        TestKit.fx(r);
+    }
+
+    private static <T> T fx(java.util.function.Supplier<T> s) {
+        return TestKit.fx(s);
+    }
+
+    private static void await(String what, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, condition);
+    }
+
+    private static void await(String what, long ms, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, ms, condition);
+    }
+
+    // ---------------------------------------------------------------------
     // Reader process
 
-    private void startReader(Stage stage) {
+    void startReader(Stage stage) {
         Label title = new Label("Clipboard reader");
         title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
         Label state = new Label("Click this window to read the clipboard");
@@ -857,8 +1162,15 @@ public class ClipboardDemo extends Application {
         stage.setScene(scene);
         stage.setTitle("Clipboard reader");
         boolean[] done = {false};
+        int[] attempts = {0};
+        Runnable[] readRef = {null};
         Runnable read = () -> {
             if (done[0]) {
+                return;
+            }
+            // The selection reaches a window some time after its focus: wait for it
+            if (Clipboard.getSystemClipboard().getContentTypes().isEmpty() && attempts[0]++ < 20) {
+                new Timeline(new KeyFrame(Duration.millis(250), e -> readRef[0].run())).play();
                 return;
             }
             done[0] = true;
@@ -869,6 +1181,7 @@ public class ClipboardDemo extends Application {
             state.setText("Read " + report.size() + " formats, closing");
             new Timeline(new KeyFrame(Duration.seconds(1), e -> Platform.exit())).play();
         };
+        readRef[0] = read;
         stage.focusedProperty().addListener((obs, o, focused) -> {
             if (focused) {
                 // Wayland sends the selection right after the focus
@@ -876,6 +1189,13 @@ public class ClipboardDemo extends Application {
             }
         });
         stage.show();
+        // Where the window is, so that the robot of the test can click it: a
+        // new window of another application may not get the focus
+        new Timeline(new KeyFrame(Duration.millis(800), e -> {
+            System.out.println(String.format(Locale.ROOT, "%s%.0f %.0f %.0f %.0f", REPORT_WINDOW, stage.getX(),
+                    stage.getY(), stage.getWidth(), stage.getHeight()));
+            System.out.flush();
+        })).play();
         new Timeline(new KeyFrame(Duration.seconds(READER_TIMEOUT_S), e -> Platform.exit())).play();
     }
 

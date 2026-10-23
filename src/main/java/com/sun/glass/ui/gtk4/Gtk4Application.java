@@ -161,7 +161,9 @@ public final class Gtk4Application extends Application {
         }
         mainContext.iteration(idle);
         processRunnableQueue();
-        while (mainContext.pending()) {
+        // Once terminating there is no event thread, so the handlers of the
+        // remaining sources cannot call into Glass
+        while (running && mainContext.pending()) {
             mainContext.iteration(false);
         }
     }

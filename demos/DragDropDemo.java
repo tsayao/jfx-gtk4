@@ -44,6 +44,7 @@ import javafx.scene.image.WritableImage;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.DataFormat;
 import javafx.scene.input.DragEvent;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseDragEvent;
 import javafx.scene.input.MouseEvent;
@@ -104,6 +105,8 @@ import java.util.stream.Collectors;
  * <li>a full press-drag-release gesture, and lists that reorder their items
  *     and move them between each other.</li>
  * </ul>
+ * Its tests (see TestKit) drag with the robot between the tiles, from the
+ * format sources to the drop target, and between the lists.
  */
 public class DragDropDemo extends Application {
 
@@ -240,7 +243,7 @@ public class DragDropDemo extends Application {
         .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-shape: " "; -fx-padding: 0; }
         """;
 
-    private static final String STYLESHEET = "data:text/css;base64,"
+    static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
     private static final DataFormat CUSTOM = new DataFormat("application/x-jfx-dragdrop-demo");
@@ -315,6 +318,10 @@ public class DragDropDemo extends Application {
     private final ListView<String> logView = new ListView<>(log);
     private final CheckBox logOver = new CheckBox("DRAG_OVER");
     private final CheckBox logMouse = new CheckBox("Mouse events of the sources");
+    {
+        // -Ddragdrop.logMouse=true logs them from the start, to debug the tests
+        logMouse.setSelected(Boolean.getBoolean("dragdrop.logMouse"));
+    }
     private final ComboBox<DragView> dragViewBox = new ComboBox<>(FXCollections.observableArrayList(DragView.values()));
     private final ComboBox<String> offsetBox = new ComboBox<>(FXCollections.observableArrayList(OFFSETS.keySet()));
     private final ComboBox<Accept> acceptBox = new ComboBox<>(FXCollections.observableArrayList(Accept.values()));
@@ -327,28 +334,29 @@ public class DragDropDemo extends Application {
     private TransferMode lastOverMode;
     private int counter;
 
+    // What the tests check, written by the event handlers
+    final TestKit.Suite suite = new TestKit.Suite("Drag and drop");
+    private final List<Node> sourceTiles = new ArrayList<>();
+    private final List<Node> targetTiles = new ArrayList<>();
+    private final Map<String, Node> chips = new HashMap<>();
+    private final Map<String, String> chipDone = new HashMap<>();
+    private final List<Label> fullTargets = new ArrayList<>();
+    private Label fullSource;
+    private String fullDragResult;
+    private ListView<String> todoList;
+    private ListView<String> doneList;
+    private int drops;
+    private String droppedText;
+    private Image droppedImage;
+    private String droppedFiles;
+    private Object droppedCustom;
+
     @Override
     public void start(Stage stage) {
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
         stage.initStyle(StageStyle.EXTENDED);
-
         BorderPane body = new BorderPane();
         body.setTop(header());
-        VBox left = column(modesCard(), fullDragCard());
-        VBox middle = column(formatsCard(), reorderCard());
-        VBox right = column(dropCard(), logCard());
-        HBox columns = new HBox(14);
-        for (VBox c : List.of(left, middle, right)) {
-            HBox.setHgrow(c, Priority.ALWAYS);
-            c.setPrefWidth(1);
-            columns.getChildren().add(c);
-        }
-        columns.setPadding(new Insets(4, 18, 18, 18));
-        ScrollPane scroll = new ScrollPane(columns);
-        scroll.setFitToWidth(true);
-        scroll.setFitToHeight(true);
-        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        body.setCenter(scroll);
+        body.setCenter(content(stage));
 
         StackPane root = new StackPane(backgroundLayer(), body);
         Rectangle2D screen = Screen.getPrimary().getVisualBounds();
@@ -363,6 +371,29 @@ public class DragDropDemo extends Application {
         stage.setMinHeight(620);
         stage.show();
         log("Ready: drag between the tiles, to the drop target, to another window or to another application");
+        TestKit.autorun(suite);
+    }
+
+    /**
+     * The lab without its header bar, which the tests launcher shows in a tab.
+     */
+    Region content(Stage stage) {
+        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        VBox left = column(modesCard(), fullDragCard(), testsCard(stage));
+        VBox middle = column(formatsCard(), reorderCard());
+        VBox right = column(dropCard(), logCard());
+        HBox columns = new HBox(14);
+        for (VBox c : List.of(left, middle, right)) {
+            HBox.setHgrow(c, Priority.ALWAYS);
+            c.setPrefWidth(1);
+            columns.getChildren().add(c);
+        }
+        columns.setPadding(new Insets(4, 18, 18, 18));
+        ScrollPane scroll = new ScrollPane(columns);
+        scroll.setFitToWidth(true);
+        scroll.setFitToHeight(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        return scroll;
     }
 
     private Region backgroundLayer() {
@@ -467,6 +498,7 @@ public class DragDropDemo extends Application {
         sourceResults.add(result);
         VBox tile = new VBox(styled(modesText(modes), "title"), result);
         tile.getStyleClass().addAll("tile", "source");
+        sourceTiles.add(tile);
         tile.setMaxWidth(Double.MAX_VALUE);
         tile.setOnDragDetected(e -> {
             Dragboard db = tile.startDragAndDrop(modes);
@@ -496,6 +528,7 @@ public class DragDropDemo extends Application {
         targetResults.add(result);
         VBox tile = new VBox(styled(modesText(modes), "title"), available, result);
         tile.getStyleClass().addAll("tile", "target");
+        targetTiles.add(tile);
         tile.setMaxWidth(Double.MAX_VALUE);
         tile.setOnDragEntered(e -> {
             tile.getStyleClass().add("over");
@@ -547,7 +580,7 @@ public class DragDropDemo extends Application {
     // Data formats and drag images
 
     private Node formatsCard() {
-        dragViewBox.setValue(DragView.SNAPSHOT);
+        dragViewBox.setValue(DragView.valueOf(System.getProperty("dragdrop.dragView", "SNAPSHOT")));
         offsetBox.setValue("At the pointer");
         GridPane options = new GridPane(10, 6);
         options.addRow(0, new Label("Drag image"), dragViewBox);
@@ -559,8 +592,9 @@ public class DragDropDemo extends Application {
                     c.putHtml("<b>Bold</b> and <i>italic</i> from <a href=\"https://openjfx.io\">JavaFX</a>");
                     c.putString("Bold and italic from JavaFX");
                 }),
-                chip("Image", "image/png", c -> c.putImage(sampleImage())),
-                chip("RGB stripes", "image/png, the drag image too", c -> c.putImage(stripes(240, 240))),
+                chip("Image", "image/png", sampleImage, c -> c.putImage(sampleImage)),
+                chip("RGB stripes", "image/png, the drag image too", stripesImage,
+                        c -> c.putImage(stripesImage)),
                 chip("Two files", "text/uri-list, verified on drop", c -> c.putFiles(sampleFiles())),
                 chip("URL", "text/uri-list + text/plain", c -> {
                     c.putUrl("https://openjdk.org/projects/openjfx/");
@@ -571,7 +605,7 @@ public class DragDropDemo extends Application {
                 chip("Everything", "all of the above", c -> {
                     c.putString("Everything from JavaFX");
                     c.putHtml("<p>Everything from <b>JavaFX</b></p>");
-                    c.putImage(sampleImage());
+                    c.putImage(sampleImage);
                     c.putFiles(sampleFiles());
                     c.put(CUSTOM, "Custom payload #" + (++counter));
                 }));
@@ -584,8 +618,21 @@ public class DragDropDemo extends Application {
     }
 
     private Node chip(String title, String detail, Consumer<ClipboardContent> filler) {
+        return chip(title, detail, null, filler);
+    }
+
+    // A chip with an image shows it, so the dropped image can be compared with the source
+    private Node chip(String title, String detail, Image preview, Consumer<ClipboardContent> filler) {
         VBox chip = new VBox(2, styled(title, "title"), styled(detail, "detail"));
+        if (preview != null) {
+            ImageView thumbnail = new ImageView(preview);
+            thumbnail.setPreserveRatio(true);
+            thumbnail.setFitHeight(64);
+            VBox.setMargin(thumbnail, new Insets(4, 0, 0, 0));
+            chip.getChildren().add(thumbnail);
+        }
         chip.getStyleClass().add("chip");
+        chips.put(title, chip);
         chip.setOnDragDetected(e -> {
             Dragboard db = chip.startDragAndDrop(TransferMode.ANY);
             ClipboardContent content = new ClipboardContent();
@@ -597,6 +644,7 @@ public class DragDropDemo extends Application {
             e.consume();
         });
         chip.setOnDragDone(e -> {
+            chipDone.put(title, e.getTransferMode() == null ? "not accepted" : e.getTransferMode().name());
             log("DRAG_DONE " + title + ": " + (e.getTransferMode() == null ? "not accepted" : e.getTransferMode()));
             e.consume();
         });
@@ -612,7 +660,7 @@ public class DragDropDemo extends Application {
                 params.setFill(Color.TRANSPARENT);
                 yield source.snapshot(params, null);
             }
-            case STRIPES -> stripes(240, 240);
+            case STRIPES -> stripesImage;
             case NONE -> null;
         };
         if (image == null) {
@@ -629,16 +677,47 @@ public class DragDropDemo extends Application {
         }
     }
 
+    private final Image sampleImage = sampleImage();
+    private final Image stripesImage = stripes(240, 240);
+
+    /**
+     * A sunset over mountains and a lake, with a translucent corner so the
+     * alpha channel is transferred as well.
+     */
     private static Image sampleImage() {
-        int w = 180, h = 120;
+        int w = 240, h = 160;
+        Color skyTop = Color.web("#312e81"), skyBottom = Color.web("#f97316");
+        Color sun = Color.web("#fde68a"), far = Color.web("#7c3aed"), near = Color.web("#1e1b4b");
+        Color water = Color.web("#0f172a");
         WritableImage image = new WritableImage(w, h);
         PixelWriter pw = image.getPixelWriter();
+        double horizon = h * 0.68;
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                double dx = x - w * 0.62, dy = y - h * 0.45;
-                boolean sun = dx * dx + dy * dy < 26 * 26;
-                Color sky = Color.web("#f59e0b").interpolate(Color.web("#6d28d9"), (double) y / h);
-                pw.setColor(x, y, sun ? Color.web("#fde68a") : y > h * 0.72 ? Color.web("#0f172a") : sky);
+                // Below the horizon the scene is mirrored and darkened
+                boolean below = y > horizon;
+                double sy = below ? 2 * horizon - y : y;
+                double dx = x - w * 0.6, dy = sy - h * 0.42;
+                double farRidge = h * 0.5 + 10 * Math.sin(x * 0.045) + 6 * Math.sin(x * 0.11 + 1);
+                double nearRidge = h * 0.6 + 8 * Math.sin(x * 0.07 + 2) + 4 * Math.sin(x * 0.19);
+                Color c;
+                if (sy > nearRidge) {
+                    c = near;
+                } else if (sy > farRidge) {
+                    c = far;
+                } else if (dx * dx + dy * dy < 22 * 22) {
+                    c = sun;
+                } else {
+                    double glow = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy) / 90);
+                    c = skyTop.interpolate(skyBottom, sy / horizon).interpolate(sun, glow * 0.5);
+                }
+                if (below) {
+                    double ripple = 0.5 + 0.1 * Math.sin(y * 1.3 + x * 0.05);
+                    c = c.interpolate(water, ripple);
+                }
+                double corner = Math.hypot(x, y);
+                double alpha = corner < 40 ? 0.35 + 0.65 * corner / 40 : 1;
+                pw.setColor(x, y, c.deriveColor(0, 1, 1, alpha));
             }
         }
         return image;
@@ -753,6 +832,11 @@ public class DragDropDemo extends Application {
      * @return false when a dragged file does not hold what was written to it
      */
     private boolean showReceived(Dragboard db, TransferMode mode, String source) {
+        drops++;
+        droppedText = db.hasString() ? db.getString() : null;
+        droppedImage = db.hasImage() ? db.getImage() : null;
+        droppedFiles = db.hasFiles() ? verifyFiles(db.getFiles()) : null;
+        droppedCustom = db.hasContent(CUSTOM) ? db.getContent(CUSTOM) : null;
         received.getChildren().clear();
         Label head = new Label("Received " + mode + " from " + source + " at " + now());
         head.setStyle("-fx-font-weight: bold;");
@@ -866,6 +950,7 @@ public class DragDropDemo extends Application {
     private Node fullDragCard() {
         Label source = new Label("Press here and drag");
         source.getStyleClass().addAll("tile", "source");
+        fullSource = source;
         source.setOnDragDetected(e -> {
             source.startFullDrag();
             log("startFullDrag()");
@@ -877,8 +962,10 @@ public class DragDropDemo extends Application {
             target.getStyleClass().add("full-target");
             target.setOnMouseDragEntered(e -> target.getStyleClass().add("over"));
             target.setOnMouseDragExited(e -> target.getStyleClass().remove("over"));
+            fullTargets.add(target);
             target.setOnMouseDragReleased(e -> {
                 target.getStyleClass().remove("over");
+                fullDragResult = name + (e.getGestureSource() == source ? " from the source" : "");
                 log(String.format(Locale.ROOT, "MOUSE_DRAG_RELEASED on %s at %.1f, %.1f from %s", name,
                         e.getX(), e.getY(), e.getGestureSource() == source ? "the source" : e.getGestureSource()));
             });
@@ -900,6 +987,8 @@ public class DragDropDemo extends Application {
                 "Wayland surfaces", "Vulkan swap chain", "Input methods", "Drag and drop", "Touch gestures"));
         ListView<String> done = reorderList(FXCollections.observableArrayList(
                 "Clipboard", "File dialogs", "Backdrop blur"));
+        todoList = todo;
+        doneList = done;
         VBox a = new VBox(6, styled("To do", "title"), todo);
         VBox b = new VBox(6, styled("Done", "title"), done);
         HBox.setHgrow(a, Priority.ALWAYS);
@@ -1000,6 +1089,189 @@ public class DragDropDemo extends Application {
             }
         }
         return false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Tests
+
+    private Node testsCard(Stage stage) {
+        defineTests();
+        suite.setBeforeRun(() -> {
+            stage.toFront();
+            stage.requestFocus();
+        });
+        suite.setAfterRobotFailure(this::resetOptions);
+        return card("Tests", suite.view());
+    }
+
+    private void resetOptions() {
+        acceptBox.setValue(Accept.ANY);
+        dragViewBox.setValue(DragView.SNAPSHOT);
+        offsetBox.setValue("At the pointer");
+    }
+
+    private void defineTests() {
+        suite.robot("Copy", "Drags the COPY source to the COPY destination", () -> modes(2, 2, "COPY"));
+        suite.robot("Move", "Drags the MOVE source to the MOVE destination", () -> modes(3, 3, "MOVE"));
+        suite.robot("Link", "Drags the LINK source to the LINK destination", () -> {
+            if ("Gtk4".equalsIgnoreCase(System.getProperty("glass.platform"))) {
+                // Wayland drags copy, move or ask; GTK offers LINK as COPY
+                TestKit.skip("Wayland has no link action for drag and drop");
+            }
+            return modes(4, 4, "LINK");
+        });
+        suite.robot("Incompatible modes", "Drags the COPY source to the MOVE destination, which must reject it",
+                () -> modes(2, 3, null));
+        suite.robot("Ctrl chooses COPY", "Drags ANY to ANY holding Ctrl", () -> modes(0, 0, "COPY", KeyCode.CONTROL));
+        suite.robot("Shift chooses MOVE", "Drags ANY to ANY holding Shift", () -> modes(0, 0, "MOVE", KeyCode.SHIFT));
+        suite.robot("Text", "Drops the Text source on the drop target", () -> {
+            dropChip("Text");
+            String text = fx(() -> droppedText);
+            check(text != null && text.startsWith("Hello from JavaFX"), "the dropped text is " + text);
+            return "\"" + text + "\"";
+        });
+        suite.robot("Image", "Drops the Image source and compares its pixels", () -> {
+            dropChip("Image");
+            Image image = fx(() -> droppedImage);
+            check(image != null, "no image was dropped");
+            check(image.getWidth() == sampleImage.getWidth() && image.getHeight() == sampleImage.getHeight(),
+                    "the image is " + image.getWidth() + " × " + image.getHeight());
+            for (int[] p : new int[][] {{120, 40}, {150, 70}, {60, 140}, {5, 5}}) {
+                int want = sampleImage.getPixelReader().getArgb(p[0], p[1]);
+                int got = image.getPixelReader().getArgb(p[0], p[1]);
+                check(closeArgb(want, got), String.format(Locale.ROOT, "pixel %d, %d is %08x, expected %08x",
+                        p[0], p[1], got, want));
+            }
+            return String.format(Locale.ROOT, "%.0f × %.0f, pixels and alpha match", image.getWidth(),
+                    image.getHeight());
+        });
+        suite.robot("Files", "Drops the Two files source and verifies the contents of the files", () -> {
+            dropChip("Two files");
+            String verdict = fx(() -> droppedFiles);
+            check(verdict != null && verdict.startsWith("SUCCESS"), "the files verdict is " + verdict);
+            return verdict;
+        });
+        suite.robot("Custom format", "Drops the Custom source, a DataFormat of the application", () -> {
+            dropChip("Custom");
+            Object value = fx(() -> droppedCustom);
+            String want = "Custom payload #" + fx(() -> counter);
+            check(want.equals(value), "the custom content is " + value + ", expected " + want);
+            return String.valueOf(value);
+        });
+        suite.robot("Rejected by the target", "Drops Text on the target that rejects everything", () -> {
+            fx(() -> acceptBox.setValue(Accept.NONE));
+            int before = fx(() -> drops);
+            fx(() -> chipDone.remove("Text"));
+            TestKit.drag(chips.get("Text"), received.getParent());
+            await("the end of the drag", () -> chipDone.containsKey("Text"));
+            fx(() -> acceptBox.setValue(Accept.ANY));
+            check("not accepted".equals(fx(() -> chipDone.get("Text"))), "the drag ended with "
+                    + fx(() -> chipDone.get("Text")));
+            check(fx(() -> drops) == before, "the target received the drop");
+            return "not accepted";
+        });
+        suite.robot("Extreme image offsets", "Drags with the drag image at NaN and Double.MAX_VALUE offsets", () -> {
+            try {
+                for (String offset : List.of("NaN", "Double.MAX_VALUE")) {
+                    fx(() -> offsetBox.setValue(offset));
+                    dropChip("Text");
+                }
+            } finally {
+                fx(() -> offsetBox.setValue("At the pointer"));
+            }
+            return "both drops arrived";
+        });
+        suite.robot("Full drag", "A press-drag-release from the full drag source to the target Two", () -> {
+            fx(() -> fullDragResult = null);
+            TestKit.drag(fullSource, fullTargets.get(1));
+            await("MOUSE_DRAG_RELEASED", () -> fullDragResult != null);
+            String result = fx(() -> fullDragResult);
+            check(result.equals("Two from the source"), "released on " + result);
+            return "released on " + result;
+        });
+        suite.robot("Move between lists", "Drags the first item of To do below the items of Done", () -> {
+            String item = fx(() -> todoList.getItems().getFirst());
+            Node from = fx(() -> todoList.lookupAll(".list-cell").stream()
+                    .filter(n -> n instanceof ListCell<?> c && item.equals(c.getItem())).findFirst().orElseThrow());
+            TestKit.reveal(doneList);
+            javafx.geometry.Point2D to = fx(() -> {
+                javafx.geometry.Bounds b = TestKit.screenBounds(doneList);
+                return new javafx.geometry.Point2D(b.getCenterX(), b.getMaxY() - 12);
+            });
+            TestKit.reveal(from);
+            TestKit.drag(fx(() -> TestKit.center(from)), to);
+            await("the item in Done", () -> doneList.getItems().contains(item));
+            await("the item out of To do", () -> !todoList.getItems().contains(item));
+            fx(() -> {
+                doneList.getItems().remove(item);
+                todoList.getItems().addFirst(item);
+            });
+            return "\"" + item + "\" moved";
+        });
+    }
+
+    /**
+     * Drags a mode source to a mode destination and checks the action of
+     * both, or that the drop is rejected when the action is null.
+     */
+    private String modes(int source, int target, String action, KeyCode... modifiers) {
+        Label done = sourceResults.get(source);
+        Label dropped = targetResults.get(target);
+        fx(() -> done.setText(""));
+        TestKit.drag(sourceTiles.get(source), targetTiles.get(target), modifiers);
+        await("the end of the drag", () -> done.getText().startsWith("Done"));
+        String doneText = fx(() -> done.getText());
+        String droppedText = fx(() -> dropped.getText());
+        if (action == null) {
+            check(doneText.startsWith("Done, rejected"), "the source shows \"" + doneText + "\"");
+            check(!droppedText.startsWith("Dropped"), "the destination shows \"" + droppedText + "\"");
+        } else {
+            check(doneText.equals("Done, accepted " + action), "the source shows \"" + doneText + "\"");
+            check(droppedText.equals("Dropped here, proposed " + action),
+                    "the destination shows \"" + droppedText + "\"");
+        }
+        return doneText;
+    }
+
+    /**
+     * Drags a format source to the drop target and waits for its drop.
+     */
+    private void dropChip(String title) {
+        int before = fx(() -> drops);
+        fx(() -> chipDone.remove(title));
+        TestKit.drag(chips.get(title), received.getParent());
+        await("the drop of " + title, 5000, () -> drops > before && chipDone.containsKey(title));
+        String done = fx(() -> chipDone.get(title));
+        check(!"not accepted".equals(done), "the drag of " + title + " was not accepted");
+    }
+
+    private static boolean closeArgb(int a, int b) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            if (Math.abs(((a >> shift) & 0xff) - ((b >> shift) & 0xff)) > 3) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void fx(Runnable r) {
+        TestKit.fx(r);
+    }
+
+    private static <T> T fx(java.util.function.Supplier<T> s) {
+        return TestKit.fx(s);
+    }
+
+    private static void await(String what, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, condition);
+    }
+
+    private static void await(String what, long ms, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, ms, condition);
+    }
+
+    private static void check(boolean condition, String message) {
+        TestKit.check(condition, message);
     }
 
     // ---------------------------------------------------------------------

@@ -89,7 +89,15 @@ final class Gtk4Accessible extends Accessible {
     private static final int GRANULARITY_SENTENCE = 2;
     private static final int GRANULARITY_LINE = 3;
 
+    // JavaFX notifies few attribute changes, such as the text of a Labeled,
+    // as the other platforms read the attributes when the assistive
+    // technology asks; GTK keeps the values it was given, so the accessibles
+    // in use are read again at this interval, in milliseconds
+    private static final int REFRESH_INTERVAL = 500;
+
     private static final Map<Long, Gtk4Accessible> ACCESSIBLES = new HashMap<>();
+    private static int refreshSource;
+    private static MemorySegment refreshCallback;
     private static final Map<Long, Gtk4Window> HOSTS = new HashMap<>();
     private static final AtomicLong IDS = new AtomicLong(1);
     private static Gtk4Accessible focusOwner;
@@ -487,7 +495,48 @@ final class Gtk4Accessible extends Accessible {
         if (n != null && atContext == null && peer() != null) {
             atContext = n.createContext(gtkRole(role()), peer);
             pushAll();
+            scheduleRefresh();
         }
+    }
+
+    private static void scheduleRefresh() {
+        if (refreshSource == 0) {
+            refreshSource = GLib.timeoutAddFull(GLib.PRIORITY_DEFAULT, REFRESH_INTERVAL, refreshCallback(),
+                    MemorySegment.NULL, MemorySegment.NULL);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static int refresh(MemorySegment data) {
+        try {
+            for (Gtk4Accessible acc : List.copyOf(ACCESSIBLES.values())) {
+                if (!acc.disposed && acc.atContext != null) {
+                    acc.pushAll();
+                }
+            }
+        } catch (Throwable t) {
+            Gtk4Log.log(LOG, "Cannot refresh the accessibles: %s", t);
+        }
+        if (ACCESSIBLES.isEmpty()) {
+            refreshSource = 0;
+            return 0;
+        }
+        return 1;
+    }
+
+    private static MemorySegment refreshCallback() {
+        if (refreshCallback == null) {
+            try {
+                refreshCallback = Linker.nativeLinker().upcallStub(
+                        MethodHandles.lookup().findStatic(Gtk4Accessible.class, "refresh",
+                                MethodType.methodType(int.class, MemorySegment.class)),
+                        FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS),
+                        Arena.global());
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        return refreshCallback;
     }
 
     private void pushAll() {

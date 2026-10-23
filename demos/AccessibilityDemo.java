@@ -72,6 +72,7 @@ import javafx.scene.effect.Glow;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.BackgroundFill;
@@ -97,10 +98,19 @@ import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import javafx.util.Duration;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A laboratory for accessibility: one control of each accessible role the
@@ -113,6 +123,11 @@ import java.util.Locale;
  * <p>
  * Use it with a screen reader (Orca, started with Super+Alt+S in GNOME) or
  * with an accessibility inspector such as Accerciser.
+ * <p>
+ * Its tests (see TestKit) check the accessible attributes of the controls,
+ * read the AT-SPI tree of the application from another process (with
+ * python3 and the Atspi GObject introspection bindings), and move the focus
+ * with the keyboard through the robot.
  */
 public class AccessibilityDemo extends Application {
 
@@ -213,7 +228,7 @@ public class AccessibilityDemo extends Application {
         .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-shape: " "; -fx-padding: 0; }
         """;
 
-    private static final String STYLESHEET = "data:text/css;base64,"
+    static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
     /** The attributes the inspector queries, when the role answers them. */
@@ -230,7 +245,7 @@ public class AccessibilityDemo extends Application {
     public record Person(String name, String role, int year) {}
 
     private boolean backdropSupported;
-    private Scene scene;
+    private Parent contentRoot;
     private final Label focusTitle = new Label("Nothing focused");
     private final GridPane focusGrid = new GridPane(12, 3);
     private final TreeView<Node> tree = new TreeView<>();
@@ -249,14 +264,55 @@ public class AccessibilityDemo extends Application {
     private Timeline progressTimeline;
     private int added;
 
+    // Controls that the tests check
+    final TestKit.Suite suite = new TestKit.Suite("Accessibility");
+    private final Button iconButton = new Button();
+    private final ToggleButton boldButton = new ToggleButton("Bold");
+    private final Label nameLabel = new Label("_Name");
+    private final PasswordField password = new PasswordField();
+    private final TextArea bio = new TextArea("JavaFX on GTK 4.\nSecond line of the biography.");
+    private final ComboBox<String> country = new ComboBox<>(FXCollections.observableArrayList(
+            "Brazil", "Canada", "Germany", "Japan", "Portugal"));
+    private final Spinner<Integer> age = new Spinner<>(0, 120, 30);
+    private final Slider volume = new Slider(0, 100, 40);
+    private final RadioButton medium = new RadioButton("Medium");
+    private final Hyperlink link = new Hyperlink("openjfx.io");
+    private final ImageView image = new ImageView(sampleImage());
+    private MenuBar menuBar;
+    private ToolBar toolBar;
+    private Menu viewMenu;
+    private TabPane tabs;
+    private TreeView<String> desktops;
+    private TableView<Person> table;
+    private Pagination pages;
+
     @Override
     public void start(Stage stage) {
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
         stage.initStyle(StageStyle.EXTENDED);
-
         BorderPane body = new BorderPane();
         body.setTop(header());
-        VBox controls = column(formCard(), collectionsCard());
+        body.setCenter(content(stage));
+
+        StackPane root = new StackPane(backgroundLayer(), body);
+        Rectangle2D screen = Screen.getPrimary().getVisualBounds();
+        Scene scene = new Scene(root, Math.min(1240, screen.getWidth() * 0.92),
+                Math.min(900, screen.getHeight() * 0.92), Color.TRANSPARENT);
+        scene.getStylesheets().add(STYLESHEET);
+        scene.getPreferences().setColorScheme(ColorScheme.DARK);
+        stage.setScene(scene);
+        stage.setTitle("Accessibility Lab");
+        stage.setMinWidth(980);
+        stage.setMinHeight(640);
+        stage.show();
+        TestKit.autorun(suite);
+    }
+
+    /**
+     * The lab without its header bar, which the tests launcher shows in a tab.
+     */
+    Region content(Stage stage) {
+        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        VBox controls = column(formCard(), collectionsCard(), testsCard(stage));
         ScrollPane controlsScroll = new ScrollPane(controls);
         controlsScroll.setFitToWidth(true);
         controlsScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
@@ -268,23 +324,14 @@ public class AccessibilityDemo extends Application {
         controlsScroll.setPrefWidth(1);
         right.setPrefWidth(1);
         columns.setPadding(new Insets(4, 18, 18, 18));
-        body.setCenter(columns);
-
-        StackPane root = new StackPane(backgroundLayer(), body);
-        Rectangle2D screen = Screen.getPrimary().getVisualBounds();
-        scene = new Scene(root, Math.min(1240, screen.getWidth() * 0.92), Math.min(900, screen.getHeight() * 0.92),
-                Color.TRANSPARENT);
-        scene.getStylesheets().add(STYLESHEET);
-        scene.getPreferences().setColorScheme(ColorScheme.DARK);
-        scene.focusOwnerProperty().addListener((obs, o, n) -> inspect(n));
-        scene.addEventFilter(MouseEvent.MOUSE_MOVED, this::inspectText);
-        stage.setScene(scene);
-        stage.setTitle("Accessibility Lab");
-        stage.setMinWidth(980);
-        stage.setMinHeight(640);
-        stage.show();
-        refreshTree();
-        inspect(scene.getFocusOwner());
+        columns.addEventFilter(MouseEvent.MOUSE_MOVED, this::inspectText);
+        contentRoot = columns;
+        TestKit.whenInScene(columns, scene -> {
+            scene.focusOwnerProperty().addListener((obs, o, n) -> inspect(n));
+            refreshTree();
+            inspect(scene.getFocusOwner());
+        });
+        return columns;
     }
 
     private Region backgroundLayer() {
@@ -360,14 +407,14 @@ public class AccessibilityDemo extends Application {
     // Controls
 
     private Node formCard() {
-        MenuBar menuBar = new MenuBar(
+        menuBar = new MenuBar(
                 new Menu("_File", null, new MenuItem("_New"), new MenuItem("_Open…"), new SeparatorMenuItem(),
                         new MenuItem("_Quit")),
                 viewMenu(),
                 new Menu("_Help", null, new MenuItem("_About")));
         menuBar.getMenus().forEach(m -> m.setMnemonicParsing(true));
 
-        Button icon = new Button();
+        Button icon = iconButton;
         SVGPath trash = new SVGPath();
         trash.setContent("M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14");
         trash.setStroke(Color.web("#e8eef7"));
@@ -377,39 +424,32 @@ public class AccessibilityDemo extends Application {
         icon.setAccessibleText("Delete");
         icon.setAccessibleHelp("Deletes the selected item. This button only has an icon.");
         icon.setTooltip(new Tooltip("Delete"));
-        ToggleButton bold = new ToggleButton("Bold");
+        ToggleButton bold = boldButton;
         bold.setAccessibleHelp("Toggles bold text");
-        ToolBar toolBar = new ToolBar(new Button("Cut"), new Button("Copy"), new Button("Paste"), icon, bold);
+        toolBar = new ToolBar(new Button("Cut"), new Button("Copy"), new Button("Paste"), icon, bold);
         toolBar.setAccessibleText("Editing tools");
 
-        Label nameLabel = new Label("_Name");
         nameLabel.setMnemonicParsing(true);
         nameLabel.setLabelFor(nameField);
         nameField.setPromptText("Your name");
         nameField.setAccessibleHelp("The name shown on your profile");
         Label passLabel = new Label("_Password");
         passLabel.setMnemonicParsing(true);
-        PasswordField password = new PasswordField();
         passLabel.setLabelFor(password);
         Label bioLabel = new Label("_Biography");
         bioLabel.setMnemonicParsing(true);
-        TextArea bio = new TextArea("JavaFX on GTK 4.\nSecond line of the biography.");
         bio.setPrefRowCount(3);
         bioLabel.setLabelFor(bio);
         Label countryLabel = new Label("_Country");
         countryLabel.setMnemonicParsing(true);
-        ComboBox<String> country = new ComboBox<>(FXCollections.observableArrayList(
-                "Brazil", "Canada", "Germany", "Japan", "Portugal"));
         country.setValue("Brazil");
         countryLabel.setLabelFor(country);
         Label ageLabel = new Label("_Age");
         ageLabel.setMnemonicParsing(true);
-        Spinner<Integer> age = new Spinner<>(0, 120, 30);
         age.setEditable(true);
         ageLabel.setLabelFor(age);
         Label volumeLabel = new Label("_Volume");
         volumeLabel.setMnemonicParsing(true);
-        Slider volume = new Slider(0, 100, 40);
         volume.setBlockIncrement(5);
         volumeLabel.setLabelFor(volume);
         volume.setAccessibleRoleDescription("volume slider");
@@ -425,7 +465,6 @@ public class AccessibilityDemo extends Application {
 
         ToggleGroup sizeGroup = new ToggleGroup();
         RadioButton small = new RadioButton("Small");
-        RadioButton medium = new RadioButton("Medium");
         RadioButton large = new RadioButton("Large");
         for (RadioButton r : List.of(small, medium, large)) {
             r.setToggleGroup(sizeGroup);
@@ -438,9 +477,7 @@ public class AccessibilityDemo extends Application {
         CheckBox maybe = new CheckBox("Indeterminate check box");
         maybe.setAllowIndeterminate(true);
         maybe.setIndeterminate(true);
-        Hyperlink link = new Hyperlink("openjfx.io");
         link.setAccessibleHelp("Opens the JavaFX website");
-        ImageView image = new ImageView(sampleImage());
         image.setAccessibleText("A sunset over a dark sea");
         image.setFocusTraversable(true);
         HBox misc = new HBox(14, agree, maybe, link, image);
@@ -460,8 +497,9 @@ public class AccessibilityDemo extends Application {
         z100.setSelected(true);
         MenuItem fullScreen = new MenuItem("_Full screen");
         fullScreen.setAccelerator(javafx.scene.input.KeyCombination.keyCombination("F11"));
-        return new Menu("_View", null, statusBar, new SeparatorMenuItem(), z100, z150, new SeparatorMenuItem(),
+        viewMenu = new Menu("_View", null, statusBar, new SeparatorMenuItem(), z100, z150, new SeparatorMenuItem(),
                 fullScreen);
+        return viewMenu;
     }
 
     private static WritableImage sampleImage() {
@@ -490,11 +528,11 @@ public class AccessibilityDemo extends Application {
         rootItem.getChildren().addAll(List.of(gnome, kde));
         rootItem.setExpanded(true);
         gnome.setExpanded(true);
-        TreeView<String> desktops = new TreeView<>(rootItem);
+        desktops = new TreeView<>(rootItem);
         desktops.setPrefHeight(150);
         desktops.setAccessibleText("Desktops");
 
-        TableView<Person> table = new TableView<>(FXCollections.observableArrayList(
+        table = new TableView<>(FXCollections.observableArrayList(
                 new Person("Ada", "Engineer", 1815), new Person("Grace", "Admiral", 1906),
                 new Person("Alan", "Mathematician", 1912)));
         TableColumn<Person, String> nameCol = new TableColumn<>("Name");
@@ -508,14 +546,14 @@ public class AccessibilityDemo extends Application {
         table.setPrefHeight(130);
         table.setAccessibleText("People");
 
-        TabPane tabs = new TabPane(
+        tabs = new TabPane(
                 new Tab("List", list),
                 new Tab("Tree", desktops),
                 new Tab("Table", table));
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.setPrefHeight(200);
 
-        Pagination pages = new Pagination(5, 0);
+        pages = new Pagination(5, 0);
         pages.setPageFactory(i -> new Label("Page " + (i + 1) + " of 5"));
         pages.setPrefHeight(90);
         pages.setAccessibleText("Pages");
@@ -692,6 +730,345 @@ public class AccessibilityDemo extends Application {
     }
 
     // ---------------------------------------------------------------------
+    // Tests
+
+    /**
+     * Reads the AT-SPI tree of a process, or invokes the first action of the
+     * first accessible with a role and a name, the way assistive technologies
+     * do. Prints one line per accessible: depth, role, name and states.
+     */
+    private static final String ATSPI_SCRIPT = """
+            import sys, gi
+            gi.require_version('Atspi', '2.0')
+            from gi.repository import Atspi
+            command, pid = sys.argv[1], int(sys.argv[2])
+            STATES = (('checked', Atspi.StateType.CHECKED), ('focused', Atspi.StateType.FOCUSED),
+                      ('enabled', Atspi.StateType.ENABLED), ('showing', Atspi.StateType.SHOWING))
+            def walk(a, depth, visit):
+                if visit(a, depth):
+                    return True
+                for i in range(min(a.get_child_count(), 400)):
+                    c = a.get_child_at_index(i)
+                    if c is not None and walk(c, depth + 1, visit):
+                        return True
+                return False
+            def dump(a, depth):
+                states = a.get_state_set()
+                flags = ','.join(n for n, s in STATES if states.contains(s))
+                print('%d\\t%s\\t%s\\t%s' % (depth, a.get_role_name(), (a.get_name() or '').replace('\\n', ' '), flags))
+                return False
+            def act(a, depth):
+                if a.get_role_name() == sys.argv[3] and a.get_name() == sys.argv[4]:
+                    action = a.get_action_iface()
+                    if action is None or action.get_n_actions() == 0:
+                        print('no action interface')
+                    else:
+                        print('done' if action.do_action(0) else 'action failed')
+                    return True
+                return False
+            desktop = Atspi.get_desktop(0)
+            for i in range(desktop.get_child_count()):
+                app = desktop.get_child_at_index(i)
+                if app is not None and app.get_process_id() == pid:
+                    if not walk(app, 0, dump if command == 'dump' else act):
+                        print('missing' if command != 'dump' else '')
+                    break
+            else:
+                print('no application')
+            """;
+
+    private record AtspiNode(int depth, String role, String name, String states) {}
+
+    private Node testsCard(Stage stage) {
+        defineTests();
+        suite.setBeforeRun(() -> {
+            stage.toFront();
+            stage.requestFocus();
+        });
+        return card("Tests", suite.view());
+    }
+
+    private void defineTests() {
+        suite.auto("Roles", "Each control answers ROLE with its accessible role", () -> {
+            Map<Node, AccessibleRole> roles = fx(() -> {
+                Map<Node, AccessibleRole> m = new LinkedHashMap<>();
+                m.put(iconButton, AccessibleRole.BUTTON);
+                m.put(boldButton, AccessibleRole.TOGGLE_BUTTON);
+                m.put(nameField, AccessibleRole.TEXT_FIELD);
+                m.put(password, AccessibleRole.PASSWORD_FIELD);
+                m.put(bio, AccessibleRole.TEXT_AREA);
+                m.put(country, AccessibleRole.COMBO_BOX);
+                m.put(age, AccessibleRole.SPINNER);
+                m.put(volume, AccessibleRole.SLIDER);
+                m.put(medium, AccessibleRole.RADIO_BUTTON);
+                m.put(agree, AccessibleRole.CHECK_BOX);
+                m.put(link, AccessibleRole.HYPERLINK);
+                m.put(image, AccessibleRole.IMAGE_VIEW);
+                m.put(menuBar, AccessibleRole.MENU_BAR);
+                m.put(toolBar, AccessibleRole.TOOL_BAR);
+                m.put(tabs, AccessibleRole.TAB_PANE);
+                m.put(list, AccessibleRole.LIST_VIEW);
+                m.put(desktops, AccessibleRole.TREE_VIEW);
+                m.put(table, AccessibleRole.TABLE_VIEW);
+                m.put(progress, AccessibleRole.PROGRESS_INDICATOR);
+                m.put(pages, AccessibleRole.PAGINATION);
+                return m;
+            });
+            for (Map.Entry<Node, AccessibleRole> e : roles.entrySet()) {
+                Object role = fx(() -> e.getKey().queryAccessibleAttribute(AccessibleAttribute.ROLE));
+                TestKit.check(role == e.getValue(), e.getKey().getClass().getSimpleName() + " answers " + role
+                        + ", expected " + e.getValue());
+            }
+            return roles.size() + " roles";
+        });
+        suite.auto("Names and labels", "Accessible text, labels, help and role descriptions", () -> {
+            fx(() -> {
+                TestKit.check("Delete".equals(iconButton.queryAccessibleAttribute(AccessibleAttribute.TEXT)),
+                        "the icon button is named " + iconButton.queryAccessibleAttribute(AccessibleAttribute.TEXT));
+                TestKit.check(nameField.queryAccessibleAttribute(AccessibleAttribute.LABELED_BY) == nameLabel,
+                        "the name field is labeled by " + nameField.queryAccessibleAttribute(
+                                AccessibleAttribute.LABELED_BY));
+                TestKit.check("volume slider".equals(volume.queryAccessibleAttribute(
+                        AccessibleAttribute.ROLE_DESCRIPTION)), "the slider is described as "
+                        + volume.queryAccessibleAttribute(AccessibleAttribute.ROLE_DESCRIPTION));
+                TestKit.check("A sunset over a dark sea".equals(image.queryAccessibleAttribute(
+                        AccessibleAttribute.TEXT)), "the image is named "
+                        + image.queryAccessibleAttribute(AccessibleAttribute.TEXT));
+                TestKit.check("The name shown on your profile".equals(nameField.queryAccessibleAttribute(
+                        AccessibleAttribute.HELP)), "the help of the name field is "
+                        + nameField.queryAccessibleAttribute(AccessibleAttribute.HELP));
+            });
+            return "text, LABELED_BY, ROLE_DESCRIPTION and HELP";
+        });
+        suite.auto("AT-SPI tree", "Reads the tree of this process with Atspi, as a screen reader does", () -> {
+            List<AtspiNode> nodes = atspiTree();
+            List<String> missing = new ArrayList<>();
+            String[][] expected = {
+                {"button", "Delete"}, {"toggle button", "Bold"}, {"text", "Name"}, {"text", "Password"},
+                {"text", "Biography"}, {"combo box", "Country"}, {"spin button", "Age"}, {"slider", "Volume"},
+                {"radio button", "Medium"}, {"check box", "I agree with the terms"}, {"link", "openjfx.io"},
+                {"image", "A sunset over a dark sea"}, {"tool bar", "Editing tools"}, {"menu", "View"},
+                {"list", "Tools"}, {"list item", "Orca"}, {"page tab", "Table"}, {"progress bar", "Download"},
+            };
+            for (String[] e : expected) {
+                if (find(nodes, e[0], e[1]) == null) {
+                    missing.add(e[0] + " \"" + e[1] + "\"");
+                }
+            }
+            TestKit.check(missing.isEmpty(), "missing in AT-SPI: " + String.join(", ", missing));
+            AtspiNode radio = find(nodes, "radio button", "Medium");
+            TestKit.check(radio.states().contains("checked"), "the radio button Medium is not checked in AT-SPI");
+            return nodes.size() + " accessibles, " + expected.length + " checked";
+        });
+        suite.auto("AT-SPI name change", "Renames the status button and reads the new name with Atspi", () -> {
+            String old = fx(() -> statusButton.getText());
+            String renamed = "Status: renamed " + System.nanoTime() % 1000;
+            fx(() -> statusButton.setText(renamed));
+            try {
+                awaitAtspi("the new name", () -> find(atspiTree(), "button", renamed) != null);
+            } finally {
+                fx(() -> statusButton.setText(old));
+            }
+            return "\"" + renamed + "\"";
+        });
+        suite.auto("AT-SPI state change", "Checks the check box and reads its state with Atspi", () -> {
+            boolean old = fx(() -> agree.isSelected());
+            fx(() -> agree.setSelected(!old));
+            try {
+                awaitAtspi("the new state", () -> {
+                    AtspiNode n = find(atspiTree(), "check box", "I agree with the terms");
+                    return n != null && n.states().contains("checked") == !old;
+                });
+            } finally {
+                fx(() -> agree.setSelected(old));
+            }
+            return old ? "unchecked" : "checked";
+        });
+        suite.auto("AT-SPI action", "Clicks the rename button through its AT-SPI action", () -> {
+            String old = fx(() -> statusButton.getText());
+            String result = atspi("action", "button", "Rename the status button").trim();
+            if (result.equals("no action interface")) {
+                // GTK offers the Action interface of AT-SPI for its own widgets only
+                TestKit.skip("GTK exposes no AT-SPI actions for the accessibles of the glass");
+            }
+            TestKit.check(result.equals("done"), "the action answered " + result);
+            await("the renamed status button", () -> !statusButton.getText().equals(old));
+            String now = fx(() -> statusButton.getText());
+            fx(() -> statusButton.setText(old));
+            return "\"" + old + "\" → \"" + now + "\"";
+        });
+        suite.auto("Text offsets", "OFFSET_AT_POINT, LINE_FOR_OFFSET and LINE_START on the biography", () -> {
+            TestKit.reveal(bio);
+            int secondLine = fx(() -> bio.getText().indexOf('\n') + 1);
+            Object[] answers = fx(() -> {
+                javafx.scene.text.Text text = (javafx.scene.text.Text) bio.lookup(".text");
+                javafx.geometry.Bounds b = text.localToScreen(text.getLayoutBounds());
+                double lineHeight = b.getHeight() / 2;
+                Point2D p = new Point2D(b.getMinX() + 1, b.getMinY() + lineHeight * 1.5);
+                Object offset = bio.queryAccessibleAttribute(AccessibleAttribute.OFFSET_AT_POINT, p);
+                Object line = offset == null ? null : bio.queryAccessibleAttribute(AccessibleAttribute.LINE_FOR_OFFSET,
+                        offset);
+                Object start = line == null ? null : bio.queryAccessibleAttribute(AccessibleAttribute.LINE_START,
+                        line);
+                return new Object[] {offset, line, start};
+            });
+            TestKit.check(answers[0] instanceof Integer o && Math.abs(o - secondLine) <= 1,
+                    "the offset at the start of the second line is " + answers[0] + ", expected " + secondLine);
+            TestKit.check(Integer.valueOf(1).equals(answers[1]), "the line of that offset is " + answers[1]);
+            TestKit.check(Integer.valueOf(secondLine).equals(answers[2]), "the second line starts at " + answers[2]);
+            return "offset " + answers[0] + ", line " + answers[1] + ", line start " + answers[2];
+        });
+        suite.auto("Burst of text changes", "Appends to a text area every 10 ms, 1000 times", () -> {
+            fx(this::stressText);
+            await("the end of the burst", 30_000, () -> stressArea.getText().contains("Done in"));
+            String text = fx(() -> stressArea.getText());
+            return text.substring(text.indexOf("Done in"));
+        });
+        suite.robot("Tab moves the focus", "Tab and Shift+Tab from the name field", () -> {
+            TestKit.click(nameField);
+            await("the name field focused", nameField::isFocused);
+            TestKit.shortcut(KeyCode.TAB);
+            await("the password field focused", password::isFocused);
+            TestKit.shortcut(KeyCode.TAB, KeyCode.SHIFT);
+            await("the name field focused again", nameField::isFocused);
+            return "name → password → name";
+        });
+        suite.robot("Mnemonics", "Alt+P and Alt+B focus the labeled fields", () -> {
+            TestKit.click(nameField);
+            await("the name field focused", nameField::isFocused);
+            TestKit.shortcut(KeyCode.P, KeyCode.ALT);
+            await("the password field focused", password::isFocused);
+            TestKit.shortcut(KeyCode.B, KeyCode.ALT);
+            await("the biography focused", bio::isFocused);
+            return "Alt+P → password, Alt+B → biography";
+        });
+        suite.robot("Menu mnemonic", "Alt+V opens the View menu, Escape closes it", () -> {
+            TestKit.click(nameField);
+            TestKit.shortcut(KeyCode.V, KeyCode.ALT);
+            await("the View menu", () -> viewMenu.isShowing());
+            TestKit.shortcut(KeyCode.ESCAPE);
+            await("the View menu closed", () -> !viewMenu.isShowing());
+            return "shown and closed";
+        });
+        suite.robot("Offsets under the pointer", "Points at the biography and checks the inspector", () -> {
+            TestKit.reveal(bio);
+            fx(() -> pointerText.setText(""));
+            Point2D p = fx(() -> {
+                javafx.scene.text.Text text = (javafx.scene.text.Text) bio.lookup(".text");
+                javafx.geometry.Bounds b = text.localToScreen(text.getLayoutBounds());
+                return new Point2D(b.getMinX() + 2, b.getMinY() + b.getHeight() / 4);
+            });
+            TestKit.move(p);
+            TestKit.move(p.add(1, 0));
+            // The text node of the skin answers, inside the text area
+            await("the inspector line", () -> pointerText.getText().contains(": offset"));
+            String text = fx(() -> pointerText.getText());
+            TestKit.check(text.contains("line 0 "), "the inspector shows " + text);
+            return text;
+        });
+    }
+
+    private static AtspiNode find(List<AtspiNode> nodes, String role, String name) {
+        for (AtspiNode n : nodes) {
+            if (n.role().equals(role) && n.name().equals(name)) {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    private static List<AtspiNode> atspiTree() throws Exception {
+        List<AtspiNode> nodes = new ArrayList<>();
+        for (String line : atspi("dump").split("\n")) {
+            String[] f = line.split("\t", -1);
+            if (f.length == 4) {
+                nodes.add(new AtspiNode(Integer.parseInt(f[0]), f[1], f[2], f[3]));
+            } else if (line.equals("no application")) {
+                throw new AssertionError("this process is not on the AT-SPI bus");
+            }
+        }
+        return nodes;
+    }
+
+    private static Path script;
+
+    /**
+     * Runs the AT-SPI script with a command, skipping the test when python3
+     * or its Atspi bindings are missing.
+     */
+    private static String atspi(String... args) throws Exception {
+        if (script == null) {
+            script = Files.createTempFile("jfx-atspi", ".py");
+            script.toFile().deleteOnExit();
+            Files.writeString(script, ATSPI_SCRIPT);
+        }
+        List<String> command = new ArrayList<>(List.of("python3", "-I", script.toString(), args[0],
+                String.valueOf(ProcessHandle.current().pid())));
+        command.addAll(Arrays.asList(args).subList(1, args.length));
+        Process p;
+        try {
+            p = new ProcessBuilder(command).start();
+        } catch (IOException e) {
+            TestKit.skip("python3 is not installed");
+            return null;
+        }
+        p.getOutputStream().close();
+        CompletableFuture<String> err = CompletableFuture.supplyAsync(() -> {
+            try {
+                return new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                return e.toString();
+            }
+        });
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (!p.waitFor(30, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            throw new AssertionError("the AT-SPI script did not finish");
+        }
+        if (p.exitValue() != 0) {
+            String error = err.join();
+            if (error.contains("ModuleNotFoundError") || error.contains("Namespace Atspi not available")) {
+                TestKit.skip("python3 has no Atspi bindings (python3-gobject and at-spi2-core)");
+            }
+            throw new AssertionError("the AT-SPI script failed: " + error.strip().lines()
+                    .reduce((a, b) -> b).orElse(""));
+        }
+        return out;
+    }
+
+    @FunctionalInterface
+    private interface AtspiCondition {
+        boolean holds() throws Exception;
+    }
+
+    private static void awaitAtspi(String what, AtspiCondition condition) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            if (condition.holds()) {
+                return;
+            }
+            TestKit.pause(200);
+        }
+        throw new AssertionError("Timed out waiting in AT-SPI for " + what);
+    }
+
+    private static void fx(Runnable r) {
+        TestKit.fx(r);
+    }
+
+    private static <T> T fx(java.util.function.Supplier<T> s) {
+        return TestKit.fx(s);
+    }
+
+    private static void await(String what, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, condition);
+    }
+
+    private static void await(String what, long ms, java.util.function.BooleanSupplier condition) {
+        TestKit.await(what, ms, condition);
+    }
+
+    // ---------------------------------------------------------------------
     // Accessible tree
 
     private Node treeCard() {
@@ -734,9 +1111,9 @@ public class AccessibilityDemo extends Application {
      * technologies see.
      */
     private void refreshTree() {
-        TreeItem<Node> root = new TreeItem<>(scene.getRoot());
+        TreeItem<Node> root = new TreeItem<>(contentRoot);
         int[] count = {0};
-        addAccessibleChildren(root, scene.getRoot(), count);
+        addAccessibleChildren(root, contentRoot, count);
         root.setExpanded(true);
         tree.setRoot(root);
         treeInfo.setText(count[0] + " accessible nodes");

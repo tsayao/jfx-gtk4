@@ -23,7 +23,6 @@ import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.ColorScheme;
-import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Bounds;
@@ -53,7 +52,6 @@ import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.HeaderBar;
 import javafx.scene.layout.HeaderDragType;
@@ -83,8 +81,6 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -98,7 +94,8 @@ import java.util.function.Supplier;
  * GNOME, so the input tests need the nested GNOME Shell of the launcher and
  * -Dglass.gtk4.testSession=gnome, which the launcher passes to this demo:
  * <pre>./launcher.sh --apps=robot --compositor=gnome</pre>
- * With -Drobot.run=true (after -- in the launcher), the tests run at startup.
+ * Elsewhere they are skipped. The tests are those of TestKit, and run at
+ * startup with -Dtests.run=true (after -- in the launcher).
  */
 public class RobotDemo extends Application {
 
@@ -153,13 +150,6 @@ public class RobotDemo extends Application {
             -fx-border-color: rgba(255, 255, 255, 0.12);
             -fx-border-radius: 12;
         }
-        .status { -fx-background-radius: 999; -fx-padding: 1 9 1 9; -fx-font-size: 10px; -fx-font-weight: bold; }
-        .status.idle { -fx-background-color: rgba(255, 255, 255, 0.07); -fx-text-fill: #93a1b8; }
-        .status.running { -fx-background-color: rgba(99, 102, 241, 0.35); -fx-text-fill: #c7d2fe; }
-        .status.pass { -fx-background-color: rgba(34, 197, 94, 0.25); -fx-text-fill: #86efac; }
-        .status.fail { -fx-background-color: rgba(244, 63, 94, 0.25); -fx-text-fill: #fda4af; }
-        .detail { -fx-font-size: 11px; -fx-text-fill: #93a1b8; }
-        .summary { -fx-font-size: 18px; -fx-font-weight: bold; }
         .button {
             -fx-background-color: rgba(255, 255, 255, 0.08);
             -fx-background-radius: 9;
@@ -201,10 +191,9 @@ public class RobotDemo extends Application {
         .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-shape: " "; -fx-padding: 0; }
         """;
 
-    private static final String STYLESHEET = "data:text/css;base64,"
+    static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
-    private static final long TIMEOUT_MS = 3000;
     private static final double COLOR_TOLERANCE = 0.04;
     private static final String TYPED_TEXT = "Hello Robot 42";
     private static final int LOG_SIZE = 300;
@@ -213,7 +202,6 @@ public class RobotDemo extends Application {
         Color.web("#ff0000"), Color.web("#00ff00"), Color.web("#0000ff"), Color.web("#ffffff"), Color.web("#f59e0b")
     };
 
-    private final boolean testSession = "gnome".equals(System.getProperty("glass.gtk4.testSession"));
     private boolean backdropSupported;
     private Robot robot;
     private Stage stage;
@@ -238,54 +226,16 @@ public class RobotDemo extends Application {
     private int scrollEvents;
     private final List<KeyCode> pressedKeys = new ArrayList<>();
 
-    // Tests
-    private record Test(String name, String description, Step body) {}
-
-    @FunctionalInterface
-    private interface Step {
-        String run() throws Exception;
-    }
-
-    private final List<Test> tests = new ArrayList<>();
-    private final List<Label> statusLabels = new ArrayList<>();
-    private final List<Label> detailLabels = new ArrayList<>();
-    private final List<Button> runButtons = new ArrayList<>();
-    private final Label summary = new Label("Not run");
-    private final Button runAll = new Button("Run all tests");
-    private final AtomicBoolean running = new AtomicBoolean();
+    final TestKit.Suite suite = new TestKit.Suite("Robot");
     private final ObservableList<String> log = FXCollections.observableArrayList();
     private final ListView<String> logView = new ListView<>(log);
 
     @Override
     public void start(Stage stage) {
-        this.stage = stage;
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
-        robot = new Robot();
-        defineTests();
         stage.initStyle(StageStyle.EXTENDED);
-
         BorderPane body = new BorderPane();
         body.setTop(header());
-        VBox left = column(playgroundCard(), captureCard());
-        VBox right = column(testsCard(), logCard());
-        HBox columns = new HBox(14, left, right);
-        HBox.setHgrow(left, Priority.ALWAYS);
-        HBox.setHgrow(right, Priority.ALWAYS);
-        left.setPrefWidth(1);
-        right.setPrefWidth(1);
-        columns.setPadding(new Insets(4, 18, 18, 18));
-        VBox center = new VBox(columns);
-        VBox.setVgrow(columns, Priority.ALWAYS);
-        if (!testSession) {
-            Label warning = new Label("Robot input is generated only in the GNOME test session: run "
-                    + "./launcher.sh --apps=robot --compositor=gnome (it passes -Dglass.gtk4.testSession=gnome). "
-                    + "Here the input tests fail with UnsupportedOperationException; the capture tests still run.");
-            warning.setWrapText(true);
-            warning.getStyleClass().add("warning");
-            VBox.setMargin(warning, new Insets(0, 18, 8, 18));
-            center.getChildren().addFirst(warning);
-        }
-        body.setCenter(center);
+        body.setCenter(content(stage));
 
         StackPane root = new StackPane(backgroundLayer(), body);
         Rectangle2D screen = Screen.getPrimary().getVisualBounds();
@@ -293,7 +243,6 @@ public class RobotDemo extends Application {
                 Color.TRANSPARENT);
         scene.getStylesheets().add(STYLESHEET);
         scene.getPreferences().setColorScheme(ColorScheme.DARK);
-        scene.addEventFilter(KeyEvent.KEY_PRESSED, e -> pressedKeys.add(e.getCode()));
         stage.setScene(scene);
         stage.setTitle("Robot Lab");
         stage.setMinWidth(980);
@@ -306,10 +255,43 @@ public class RobotDemo extends Application {
         }));
         pointer.setCycleCount(Timeline.INDEFINITE);
         pointer.play();
+        TestKit.autorun(suite);
+    }
 
-        if (Boolean.getBoolean("robot.run")) {
-            Platform.runLater(() -> runTests(tests));
+    /**
+     * The lab without its header bar, which the tests launcher shows in a tab.
+     */
+    Region content(Stage stage) {
+        this.stage = stage;
+        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        robot = TestKit.robot();
+        defineTests();
+        suite.setBeforeRun(() -> {
+            stage.toFront();
+            stage.requestFocus();
+        });
+
+        VBox left = column(playgroundCard(), captureCard());
+        VBox right = column(testsCard(), logCard());
+        HBox columns = new HBox(14, left, right);
+        HBox.setHgrow(left, Priority.ALWAYS);
+        HBox.setHgrow(right, Priority.ALWAYS);
+        left.setPrefWidth(1);
+        right.setPrefWidth(1);
+        columns.setPadding(new Insets(4, 18, 18, 18));
+        VBox center = new VBox(columns);
+        VBox.setVgrow(columns, Priority.ALWAYS);
+        if (!TestKit.robotInput()) {
+            Label warning = new Label("Robot input is generated only in the GNOME test session: run "
+                    + "./launcher.sh --apps=robot --compositor=gnome (it passes -Dglass.gtk4.testSession=gnome). "
+                    + "Here the input tests are skipped; the pixel and capture tests still run.");
+            warning.setWrapText(true);
+            warning.getStyleClass().add("warning");
+            VBox.setMargin(warning, new Insets(0, 18, 8, 18));
+            center.getChildren().addFirst(warning);
         }
+        center.addEventFilter(KeyEvent.KEY_PRESSED, e -> pressedKeys.add(e.getCode()));
+        return center;
     }
 
     private Region backgroundLayer() {
@@ -343,7 +325,7 @@ public class RobotDemo extends Application {
         left.setPadding(new Insets(0, 0, 0, 18));
 
         HBox right = new HBox(10, pill(pointerPill),
-                pill(new Label(testSession ? "Test session: GNOME" : "No test session")),
+                pill(new Label(TestKit.robotInput() ? "Robot input" : "No robot input")),
                 pill(new Label(System.getProperty("glass.platform", "default") + " glass")));
         right.setAlignment(Pos.CENTER_RIGHT);
         right.setPadding(new Insets(0, 10, 0, 0));
@@ -500,7 +482,7 @@ public class RobotDemo extends Application {
     // Tests
 
     private void defineTests() {
-        tests.add(new Test("Pointer move", "Moves to the center of the pad and checks the MOUSE_MOVED position",
+        suite.robot("Pointer move", "Moves to the center of the pad and checks the MOUSE_MOVED position",
                 () -> {
                     Point2D target = fx(() -> center(pad));
                     fx(() -> lastMove = null);
@@ -509,8 +491,8 @@ public class RobotDemo extends Application {
                     Point2D reported = fx(() -> robot.getMousePosition());
                     check(reported.distance(target) < 1, "getMousePosition() is " + fmt(reported));
                     return "event at " + fmt(fx(() -> lastMove)) + ", target " + fmt(target);
-                }));
-        tests.add(new Test("Pointer path", "Moves along a diagonal of the pad in 20 steps", () -> {
+                });
+        suite.robot("Pointer path", "Moves along a diagonal of the pad in 20 steps", () -> {
             Bounds b = fx(() -> screenBounds(pad));
             for (int i = 0; i <= 20; i++) {
                 double t = i / 20.0;
@@ -522,32 +504,32 @@ public class RobotDemo extends Application {
             Point2D end = new Point2D(b.getMaxX() - 10, b.getMaxY() - 10);
             await("the pointer at the end of the path", () -> lastMove != null && lastMove.distance(end) < 2);
             return "ended at " + fmt(fx(() -> lastMove));
-        }));
-        tests.add(new Test("Left click", "Clicks the button", () -> {
+        });
+        suite.robot("Left click", "Clicks the button", () -> {
             int before = fx(() -> clicks);
             Point2D target = fx(() -> center(clickButton));
             fx(() -> robot.mouseMove(target));
             fx(() -> robot.mouseClick(MouseButton.PRIMARY));
             await("the button action", () -> clicks == before + 1);
             return "clicks " + before + " → " + fx(() -> clicks);
-        }));
-        tests.add(new Test("Double click", "Clicks the pad twice and checks the click count", () -> {
+        });
+        suite.robot("Double click", "Clicks the pad twice and checks the click count", () -> {
             fx(() -> maxClickCount = 0);
             fx(() -> robot.mouseMove(center(pad)));
             fx(() -> robot.mouseClick(MouseButton.PRIMARY));
             fx(() -> robot.mouseClick(MouseButton.PRIMARY));
             await("a MOUSE_CLICKED with click count 2", () -> maxClickCount >= 2);
             return "click count " + fx(() -> maxClickCount);
-        }));
-        tests.add(new Test("Right click", "Opens the context menu of the pad", () -> {
+        });
+        suite.robot("Right click", "Opens the context menu of the pad", () -> {
             fx(() -> contextMenuShown = false);
             fx(() -> robot.mouseMove(center(pad).add(40, 0)));
             fx(() -> robot.mouseClick(MouseButton.SECONDARY));
             await("the context menu", () -> contextMenuShown);
             fx(() -> robot.keyType(KeyCode.ESCAPE));
             return "context menu shown";
-        }));
-        tests.add(new Test("Wheel", "Scrolls the list down 3 notches", () -> {
+        });
+        suite.robot("Wheel", "Scrolls the list down 3 notches", () -> {
             fx(() -> {
                 scrollPane.setVvalue(0);
                 scrollEvents = 0;
@@ -557,8 +539,8 @@ public class RobotDemo extends Application {
             await("a scroll down", () -> scrollEvents > 0 && scrollPane.getVvalue() > 0);
             return String.format(Locale.ROOT, "%d events, vvalue %.2f", fx(() -> scrollEvents),
                     fx(() -> scrollPane.getVvalue()));
-        }));
-        tests.add(new Test("Drag", "Drags the slider thumb to the right end", () -> {
+        });
+        suite.robot("Drag", "Drags the slider thumb to the right end", () -> {
             fx(() -> slider.setValue(0));
             Point2D thumb = fx(() -> center(slider.lookup(".thumb")));
             Bounds track = fx(() -> screenBounds(slider));
@@ -572,19 +554,17 @@ public class RobotDemo extends Application {
             fx(() -> robot.mouseRelease(MouseButton.PRIMARY));
             await("the slider at its maximum", () -> slider.getValue() > 95);
             return String.format(Locale.ROOT, "value %.0f", fx(() -> slider.getValue()));
-        }));
-        tests.add(new Test("Typing", "Types \"" + TYPED_TEXT + "\" with Shift for capitals", () -> {
+        });
+        suite.robot("Typing", "Types \"" + TYPED_TEXT + "\" with Shift for capitals", () -> {
             fx(() -> textField.clear());
             fx(() -> robot.mouseMove(center(textField)));
             fx(() -> robot.mouseClick(MouseButton.PRIMARY));
             await("the text field focused", textField::isFocused);
-            for (char c : TYPED_TEXT.toCharArray()) {
-                fx(() -> type(c));
-            }
+            TestKit.type(TYPED_TEXT);
             await("the typed text", () -> TYPED_TEXT.equals(textField.getText()));
             return "\"" + fx(() -> textField.getText()) + "\"";
-        }));
-        tests.add(new Test("Shortcuts", "Selects all with Ctrl+A and deletes with Backspace", () -> {
+        });
+        suite.robot("Shortcuts", "Selects all with Ctrl+A and deletes with Backspace", () -> {
             fx(() -> {
                 textField.setText("select me");
                 textField.requestFocus();
@@ -600,8 +580,8 @@ public class RobotDemo extends Application {
             fx(() -> robot.keyType(KeyCode.BACK_SPACE));
             await("an empty text field", () -> textField.getText().isEmpty());
             return "keys " + fx(() -> List.copyOf(pressedKeys));
-        }));
-        tests.add(new Test("Pixel color", "Reads the center pixel of every swatch", () -> {
+        });
+        suite.auto("Pixel color", "Reads the center pixel of every swatch", () -> {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < SWATCHES.length; i++) {
                 Rectangle r = swatches.get(i);
@@ -611,8 +591,8 @@ public class RobotDemo extends Application {
                 sb.append(hex(got)).append(' ');
             }
             return sb.toString().trim();
-        }));
-        tests.add(new Test("Screen capture", "Captures the swatches and checks their colors in the image", () -> {
+        });
+        suite.auto("Screen capture", "Captures the swatches and checks their colors in the image", () -> {
             Bounds b = fx(() -> screenBounds(swatches.getFirst().getParent()));
             WritableImage image = fx(() -> robot.getScreenCapture(null,
                     new Rectangle2D(b.getMinX(), b.getMinY(), b.getWidth(), b.getHeight()), false));
@@ -631,183 +611,30 @@ public class RobotDemo extends Application {
             }
             return String.format(Locale.ROOT, "%.0f × %.0f pixels, scale %.2f", image.getWidth(),
                     image.getHeight(), sx);
-        }));
-    }
-
-    private void type(char c) {
-        KeyCode code = switch (c) {
-            case ' ' -> KeyCode.SPACE;
-            case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> KeyCode.getKeyCode(String.valueOf(c));
-            default -> KeyCode.getKeyCode(String.valueOf(Character.toUpperCase(c)));
-        };
-        if (code == null) {
-            throw new IllegalArgumentException("Cannot type '" + c + "'");
-        }
-        boolean shift = Character.isUpperCase(c);
-        if (shift) {
-            robot.keyPress(KeyCode.SHIFT);
-        }
-        robot.keyType(code);
-        if (shift) {
-            robot.keyRelease(KeyCode.SHIFT);
-        }
-    }
-
-    private Node testsCard() {
-        GridPane grid = new GridPane(10, 6);
-        for (int i = 0; i < tests.size(); i++) {
-            Test test = tests.get(i);
-            Label name = new Label(test.name());
-            name.setStyle("-fx-font-weight: bold;");
-            Label status = new Label("IDLE");
-            status.getStyleClass().addAll("status", "idle");
-            status.setMinWidth(Region.USE_PREF_SIZE);
-            Label detail = new Label(test.description());
-            detail.getStyleClass().add("detail");
-            detail.setWrapText(true);
-            Button run = new Button("Run");
-            run.getStyleClass().add("small");
-            run.setOnAction(e -> runTests(List.of(test)));
-            statusLabels.add(status);
-            detailLabels.add(detail);
-            runButtons.add(run);
-            GridPane.setHgrow(detail, Priority.ALWAYS);
-            grid.addRow(i, status, name, detail, run);
-        }
-        runAll.getStyleClass().add("accent");
-        runAll.setOnAction(e -> runTests(tests));
-        summary.getStyleClass().add("summary");
-        HBox top = new HBox(12, runAll, summary);
-        top.setAlignment(Pos.CENTER_LEFT);
-        Label hint = muted("Do not touch the mouse or the keyboard while the tests run. "
-                + "Pass -Drobot.run=true to run them at startup.");
-        return card("Tests", top, grid, hint);
-    }
-
-    private void runTests(List<Test> selected) {
-        if (!running.compareAndSet(false, true)) {
-            return;
-        }
-        runAll.setDisable(true);
-        runButtons.forEach(b -> b.setDisable(true));
-        for (Test t : selected) {
-            setStatus(tests.indexOf(t), "idle", "QUEUED", t.description());
-        }
-        summary.setText("Running…");
-        stage.toFront();
-        stage.requestFocus();
-        Thread.ofPlatform().daemon().name("robot-tests").start(() -> {
-            int passed = 0;
-            long start = System.nanoTime();
-            for (Test t : selected) {
-                int index = tests.indexOf(t);
-                fx(() -> setStatus(index, "running", "RUNNING", t.description()));
-                long t0 = System.nanoTime();
-                String result;
-                boolean ok;
-                try {
-                    result = t.body().run();
-                    ok = true;
-                } catch (Throwable ex) {
-                    result = ex instanceof AssertionError ? ex.getMessage() : ex.toString();
-                    ok = false;
-                }
-                long ms = (System.nanoTime() - t0) / 1_000_000;
-                String detail = result + " (" + ms + " ms)";
-                boolean pass = ok;
-                fx(() -> {
-                    setStatus(index, pass ? "pass" : "fail", pass ? "PASS" : "FAIL", detail);
-                    log((pass ? "PASS " : "FAIL ") + t.name() + ": " + detail);
-                });
-                System.out.println((pass ? "PASS " : "FAIL ") + t.name() + ": " + detail);
-                if (ok) {
-                    passed++;
-                }
-                pause(150);
-            }
-            long total = (System.nanoTime() - start) / 1_000_000;
-            String text = passed + " of " + selected.size() + " passed in " + total + " ms";
-            System.out.println(text);
-            fx(() -> {
-                summary.setText(text);
-                summary.setTextFill(Color.web(text.startsWith(selected.size() + " ") ? "#86efac" : "#fda4af"));
-                runAll.setDisable(false);
-                runButtons.forEach(b -> b.setDisable(false));
-                running.set(false);
-            });
         });
     }
 
-    private void setStatus(int index, String style, String text, String detail) {
-        Label status = statusLabels.get(index);
-        status.getStyleClass().removeAll("idle", "running", "pass", "fail");
-        status.getStyleClass().add(style);
-        status.setText(text);
-        detailLabels.get(index).setText(detail);
+    private Node testsCard() {
+        return card("Tests", suite.view());
     }
 
     // ---------------------------------------------------------------------
     // Helpers for the test thread
 
     private static void fx(Runnable r) {
-        fx(() -> {
-            r.run();
-            return null;
-        });
+        TestKit.fx(r);
     }
 
     private static <T> T fx(Supplier<T> s) {
-        if (Platform.isFxApplicationThread()) {
-            return s.get();
-        }
-        CompletableFuture<T> future = new CompletableFuture<>();
-        Platform.runLater(() -> {
-            try {
-                future.complete(s.get());
-            } catch (Throwable t) {
-                future.completeExceptionally(t);
-            }
-        });
-        try {
-            return future.join();
-        } catch (java.util.concurrent.CompletionException e) {
-            if (e.getCause() instanceof RuntimeException re) {
-                throw re;
-            }
-            if (e.getCause() instanceof Error err) {
-                throw err;
-            }
-            throw e;
-        }
+        return TestKit.fx(s);
     }
 
-    /**
-     * Polls the condition on the FX thread until it holds, failing after the
-     * timeout.
-     */
     private static void await(String what, BooleanSupplier condition) {
-        long deadline = System.nanoTime() + TIMEOUT_MS * 1_000_000;
-        while (System.nanoTime() < deadline) {
-            if (fx(condition::getAsBoolean)) {
-                return;
-            }
-            pause(20);
-        }
-        throw new AssertionError("Timed out waiting for " + what);
+        TestKit.await(what, condition);
     }
 
     private static void check(boolean condition, String message) {
-        if (!condition) {
-            throw new AssertionError(message);
-        }
-    }
-
-    private static void pause(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        TestKit.check(condition, message);
     }
 
     private static Bounds screenBounds(Node node) {

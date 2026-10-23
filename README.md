@@ -159,10 +159,39 @@ Others test the platform integration, after the manual tests of OpenJFX:
 | `touch`         | Touch points, and the scroll, zoom, rotate and swipe gestures of touch screens and touchpads |
 | `robot`         | A self test of `javafx.scene.robot.Robot`: pointer, buttons, wheel, keyboard, pixels and screen capture |
 | `accessibility` | Accessible roles, names and states, live changes, and an inspector of the accessible attributes |
+| `windows`       | Every window style, focus, maximized, full screen and minimized states before and after show, modality, min and max sizes, popups |
+| `dialogs`       | File and folder choosers (through the portal), extension filters, alerts, text input and choice dialogs |
+| `scene3d`       | 3D rendering checked on the screen and in snapshots, and the frame rate of heavier scenes; skipped on the `sw` pipeline |
+| `swing`         | SwingNode painting and input, a JFXPanel in a JFrame, the EDT and FX threads, and the clipboard between Swing (X11, through Xwayland) and JavaFX |
+| `tests`         | The tests of all of the above, in a tab per lab, run one lab after the other |
 
-The input tests of `robot` need the GNOME test session, so it runs with
-`./launcher.sh --apps=robot --compositor=gnome`, which passes
-`-Dglass.gtk4.testSession=gnome` to it.
+Each of these labs has a table of tests, which show OK, FAIL or SKIP (see
+`demos/TestKit.java`), and `tests` shows all the labs in one window, a tab
+per lab, with an overview and a button that runs the tests of every lab:
+
+- automatic tests check what the lab can do alone, such as reading the
+  clipboard in a second process, exchanging data with `wl-copy` and
+  `wl-paste`, or reading the AT-SPI tree of the application with `python3`
+  and the Atspi bindings, as a screen reader does;
+- robot tests drive the lab with `javafx.scene.robot.Robot`: drags between
+  the tiles and to the drop target, copy and paste with the keyboard, focus
+  traversal and mnemonics. The GTK 4 glass generates robot input only in the
+  GNOME test session, so they run under `--compositor=gnome`, where the
+  launcher passes `-Dglass.gtk4.testSession=gnome`, and are skipped elsewhere;
+- manual tests wait for a device the robot does not have, such as a touch
+  screen: they pass when the lab sees their events, or with their OK and FAIL
+  buttons.
+
+```
+./launcher.sh --apps=tests --compositor=gnome
+./launcher.sh --apps=tests --compositor=gnome -- -Dtests.run=true -Dtests.exit=true
+```
+
+`-Dtests.run=true` runs the tests at startup and `-Dtests.exit=true` exits
+afterwards, with status 1 when a test failed; each result is also printed, as
+`OK`, `FAIL` or `SKIP` lines. A toolbox container created before these tests
+needs their tools: `toolbox run -c jfx-gnome51 sudo dnf install wl-clipboard
+python3-gobject at-spi2-core`.
 
 ## Launcher
 
@@ -186,7 +215,7 @@ the plugin is built first with `./gradlew jar`.
 | `--toolbox=NAME`             | Toolbox container with GNOME 51 (`jfx-gnome51`), or `none` for the GNOME Shell of the host |
 | `--toolbox-release=N`        | Fedora release of a new toolbox container (`45`)               |
 | `--wallpaper=FILE`           | gnome: desktop image; kwin: `javafx` for `Wallpaper.java`      |
-| `--size=WxH`, `--scale=N`    | kwin: size and scale of the nested output                      |
+| `--size=WxH`, `--scale=N`    | gnome, kwin: size of the nested output (2400x1440); kwin: its scale |
 | `--screenshot=FILE`          | gnome: screenshot of the nested desktop                        |
 | `--list`, `--help`           | Lists the demos, or shows all the options                      |
 

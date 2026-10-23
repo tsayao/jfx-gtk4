@@ -305,6 +305,14 @@ public class Gtk4View extends View {
 
     int onEvent(GtkEventController controller, GdkEvent event) {
         int type = event.getEventType();
+        if (isBlocked() && type != Gdk.MOTION_NOTIFY) {
+            // A modal window disables the others: their input is dropped, and a
+            // press brings the modal window forward
+            if (type == Gdk.BUTTON_PRESS || type == Gdk.TOUCH_BEGIN) {
+                ((Gtk4Window) getWindow()).notifyBlockedPress();
+            }
+            return 1;
+        }
         switch (type) {
             case Gdk.BUTTON_PRESS, Gdk.BUTTON_RELEASE -> {
                 processButton(event.cast(GdkButtonEvent::new), type == Gdk.BUTTON_PRESS);
@@ -719,11 +727,14 @@ public class Gtk4View extends View {
         int iy = (int) y;
         int xAbs = window != null ? window.getScreenX() + ix : ix;
         int yAbs = window != null ? window.getScreenY() + iy : iy;
-        int recommended = Gtk4DnD.toGlassAction(drop.getActions());
+        int available = Gtk4DnD.toGlassAction(drop.getActions());
+        int recommended = Gtk4DnD.recommendedAction(drop.getActions());
         int result = enter
                 ? notifyDragEnter(ix, iy, xAbs, yAbs, recommended)
                 : notifyDragOver(ix, iy, xAbs, yAbs, recommended);
-        return Gtk4DnD.preferredGdkAction(result & recommended);
+        Gtk4Log.log(Gtk4Log.Category.DRAG_DROP, "drag %s: drop actions=0x%x, recommended=%d, accepted=%d",
+                enter ? "enter" : "motion", drop.getActions(), recommended, result);
+        return Gtk4DnD.preferredGdkAction(result & available);
     }
 
     void onDragLeave(GtkEventController controller, GdkDrop drop) {
@@ -741,9 +752,9 @@ public class Gtk4View extends View {
         int xAbs = window != null ? window.getScreenX() + ix : ix;
         int yAbs = window != null ? window.getScreenY() + iy : iy;
         try {
-            int recommended = Gtk4DnD.toGlassAction(drop.getActions());
-            int result = notifyDragDrop(ix, iy, xAbs, yAbs, recommended);
-            drop.finish(Gtk4DnD.preferredGdkAction(result & recommended));
+            int available = Gtk4DnD.toGlassAction(drop.getActions());
+            int result = notifyDragDrop(ix, iy, xAbs, yAbs, Gtk4DnD.recommendedAction(drop.getActions()));
+            drop.finish(Gtk4DnD.preferredGdkAction(result & available));
         } finally {
             Gtk4DnD.dropFinished(drop);
         }
@@ -753,7 +764,14 @@ public class Gtk4View extends View {
     // ---------------------------------------------------------------------
     // Keyboard
 
+    private boolean isBlocked() {
+        return getWindow() != null && !getWindow().isEnabled();
+    }
+
     int onKeyPressed(GtkEventController controller, int keyval, int keycode, int state) {
+        if (isBlocked()) {
+            return 1;
+        }
         GdkEvent event = controller.getCurrentEvent();
         if (imeHandler != null && imeHandler.filter(event)) {
             return 1;
@@ -763,6 +781,9 @@ public class Gtk4View extends View {
     }
 
     void onKeyReleased(GtkEventController controller, int keyval, int keycode, int state) {
+        if (isBlocked()) {
+            return;
+        }
         GdkEvent event = controller.getCurrentEvent();
         if (imeHandler != null && imeHandler.filter(event)) {
             return;

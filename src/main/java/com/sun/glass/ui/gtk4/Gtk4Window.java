@@ -31,6 +31,9 @@ import com.sun.glass.ui.Screen;
 import com.sun.glass.ui.View;
 import com.sun.glass.ui.Window;
 import com.sun.glass.ui.gtk4.wrappers.GObject;
+import com.sun.glass.ui.gtk4.wrappers.GdkAppLaunchContext;
+import com.sun.glass.ui.gtk4.wrappers.GLib;
+import com.sun.glass.ui.gtk4.wrappers.GdkDisplay;
 import com.sun.glass.ui.gtk4.wrappers.Gdk;
 import com.sun.glass.ui.gtk4.wrappers.GdkCursor;
 import com.sun.glass.ui.gtk4.wrappers.GdkDevice;
@@ -57,6 +60,12 @@ import javafx.geometry.Dimension2D;
 
 import java.lang.annotation.Native;
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -735,8 +744,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         boolean fullscreen = gtkWindow.isFullscreen();
         Gtk4Log.log(STATE, "onFullscreenedChanged: fullscreen=%b", fullscreen);
         updateDecorationVisibility(!fullscreen);
-        getCurrentView().ifPresent(v -> v.notifyViewEvent(
-                fullscreen ? ViewEvent.FULLSCREEN_ENTER : ViewEvent.FULLSCREEN_EXIT));
+        reportFullscreen(fullscreen);
         updateWindowConstraints();
         updateBlurRegion();
         restoreInitialGeometry();
@@ -1369,7 +1377,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         } else {
             pendingMinimize = false;
             gtkWindow.unminimize();
-            gtkWindow.present();
+            activate();
             if (minimized) {
                 minimized = false;
                 notifyResize(WindowEvent.RESTORE, windowWidth, windowHeight);
@@ -1401,6 +1409,23 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         return maximize;
     }
 
+    /**
+     * Tells JavaFX whether the window is in full screen, once per change.
+     * A request is reported when it is made, before the compositor applies
+     * it: JavaFX asks to leave full screen only when it knows the window is in
+     * it, so a request to leave made before the compositor confirmed the
+     * entry would otherwise be dropped.
+     */
+    void reportFullscreen(boolean fullscreen) {
+        if (fullscreen != fullscreenReported) {
+            fullscreenReported = fullscreen;
+            getCurrentView().ifPresent(v -> v.notifyViewEvent(
+                    fullscreen ? ViewEvent.FULLSCREEN_ENTER : ViewEvent.FULLSCREEN_EXIT));
+        }
+    }
+
+    private boolean fullscreenReported;
+
     void enterFullscreen() {
         if (gtkWindow == null) {
             return;
@@ -1409,6 +1434,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             initialState |= INITIAL_STATE_FULLSCREEN;
             return;
         }
+        reportFullscreen(true);
         restorePending |= !floatingShown;
         applyResizableContentSize();
         gtkWindow.setResizable(true);
@@ -1423,6 +1449,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
             initialState &= ~INITIAL_STATE_FULLSCREEN;
             return;
         }
+        reportFullscreen(false);
         gtkWindow.unfullscreen();
     }
 
@@ -1450,9 +1477,73 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         if (gtkWindow == null || !gtkWindow.getVisible()) {
             return false;
         }
-        gtkWindow.present();
+        activate();
         viewWidget.grabFocus();
         return true;
+    }
+
+    /**
+     * Raises and focuses the window. Wayland gives the focus to another
+     * window only with an activation token of the focused one, which the
+     * launch context of the display requests, as GTK does to start
+     * applications.
+     */
+    private void activate() {
+        if (!gtkWindow.isActive()) {
+            if (Gtk4TestSession.isEnabled() && testTag != null) {
+                // The compositor of the test session does not honor the tokens of a
+                // client without input; it activates the window itself, as at show
+                Gtk4Log.log(FOCUS, "test activation: %s", Gtk4TestSession.activateWindow(testTag));
+                return;
+            }
+            String token = activationToken();
+            Gtk4Log.log(FOCUS, "activate: token=%s", token);
+            if (token != null) {
+                gtkWindow.setStartupId(token);
+            }
+        }
+        gtkWindow.present();
+    }
+
+    /**
+     * A press in a window that a modal window disables, which brings the
+     * modal window forward.
+     */
+    void notifyBlockedPress() {
+        notifyFocusDisabled();
+    }
+
+    private static MethodHandle startupNotifyId;
+
+    private static String activationToken() {
+        try {
+            if (startupNotifyId == null) {
+                SymbolLookup gio = SymbolLookup.libraryLookup("libgio-2.0.so.0", Arena.global());
+                startupNotifyId = Linker.nativeLinker().downcallHandle(
+                        gio.find("g_app_launch_context_get_startup_notify_id").orElseThrow(),
+                        FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                ValueLayout.ADDRESS));
+            }
+            GdkAppLaunchContext context = GdkDisplay.getDefault().getAppLaunchContext();
+            if (context == null || context.isNull()) {
+                return null;
+            }
+            try {
+                MemorySegment id = (MemorySegment) startupNotifyId.invokeExact(context.getPointer(),
+                        MemorySegment.NULL, MemorySegment.NULL);
+                if (id.address() == 0) {
+                    return null;
+                }
+                String token = id.reinterpret(Long.MAX_VALUE).getString(0);
+                GLib.free(id);
+                return token;
+            } finally {
+                context.unref();
+            }
+        } catch (Throwable t) {
+            Gtk4Log.log(FOCUS, "Cannot get an activation token: %s", t);
+            return null;
+        }
     }
 
     @Override
@@ -1542,7 +1633,7 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
     @Override
     protected void _toFront(long ptr) {
         if (gtkWindow != null && gtkWindow.getVisible()) {
-            gtkWindow.present();
+            activate();
         }
     }
 

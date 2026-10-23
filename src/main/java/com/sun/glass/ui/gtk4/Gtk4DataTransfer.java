@@ -198,6 +198,26 @@ final class Gtk4DataTransfer {
     }
 
     /**
+     * Moves the raw image to the front of the mime types. JavaFX 27.0.1
+     * answers whether there is an image from the first of text/html and the
+     * raw image it finds, so an HTML entry listed first hides the image.
+     */
+    static String[] rawImageFirst(String[] mimes) {
+        if (mimes == null) {
+            return null;
+        }
+        List<String> result = new ArrayList<>(mimes.length);
+        for (String mime : mimes) {
+            if (Clipboard.RAW_IMAGE_TYPE.equals(mime)) {
+                result.add(0, mime);
+            } else {
+                result.add(mime);
+            }
+        }
+        return result.toArray(new String[0]);
+    }
+
+    /**
      * Reads the content of a source as the Glass value for a mime type.
      */
     static Object read(Source source, String mime) {

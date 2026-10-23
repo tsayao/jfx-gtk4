@@ -42,6 +42,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.effect.Glow;
 import javafx.scene.input.GestureEvent;
@@ -92,6 +93,9 @@ import java.util.Map;
  * scroll, zoom, rotate and swipe gestures, of a touch screen (direct) or of a
  * touchpad (indirect). Counters show which events arrive, and whether mouse
  * events are synthesized from touches.
+ * <p>
+ * The robot cannot touch, so its tests (see TestKit) are manual: they pass
+ * when the lab sees the events of a touch screen or touchpad.
  */
 public class TouchDemo extends Application {
 
@@ -170,13 +174,14 @@ public class TouchDemo extends Application {
         .button:hover { -fx-background-color: rgba(255, 255, 255, 0.15); }
         .list-view { -fx-background-color: transparent; -fx-border-color: transparent; }
         .list-view .list-cell { -fx-background-color: transparent; -fx-text-fill: #e8eef7; }
+        .scroll-pane, .scroll-pane > .viewport { -fx-background-color: transparent; }
         .scroll-bar { -fx-background-color: transparent; }
         .scroll-bar .thumb { -fx-background-color: rgba(255, 255, 255, 0.25); -fx-background-radius: 6; }
         .scroll-bar .increment-button, .scroll-bar .decrement-button { -fx-padding: 0; }
         .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-shape: " "; -fx-padding: 0; }
         """;
 
-    private static final String STYLESHEET = "data:text/css;base64,"
+    static final String STYLESHEET = "data:text/css;base64,"
             + Base64.getEncoder().encodeToString(CSS.getBytes(StandardCharsets.UTF_8));
 
     private static final Color[] FINGERS = {
@@ -209,22 +214,25 @@ public class TouchDemo extends Application {
     private final ObservableList<String> log = FXCollections.observableArrayList();
     private final ListView<String> logView = new ListView<>(log);
 
+    // Tests
+    final TestKit.Suite suite = new TestKit.Suite("Touch");
+    private final TestKit.Test touchTest = suite.manual("Touch points",
+            "A finger pressed and released on the touch canvas, with the same id");
+    private final TestKit.Test multiTest = suite.manual("Several fingers", "Two fingers on the touch canvas at once");
+    private final TestKit.Test synthTest = suite.manual("Mouse from touch",
+            "A touch also delivers a MOUSE_PRESSED flagged as synthesized");
+    private final TestKit.Test touchScrollTest = suite.manual("Touch scroll",
+            "A finger dragged on the gesture area scrolls the card (a direct SCROLL)");
+    private final TestKit.Test zoomTest = suite.manual("Zoom", "Pinch on the gesture area");
+    private final TestKit.Test rotateTest = suite.manual("Rotate", "Rotate two fingers on the gesture area");
+    private final TestKit.Test swipeTest = suite.manual("Swipe", "Swipe on the gesture area (three fingers on a touchpad)");
+
     @Override
     public void start(Stage stage) {
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
         stage.initStyle(StageStyle.EXTENDED);
-
         BorderPane body = new BorderPane();
         body.setTop(header());
-        VBox left = column(touchCard());
-        VBox right = column(gestureCard(), eventsCard());
-        VBox.setVgrow(left.getChildren().getFirst(), Priority.ALWAYS);
-        HBox columns = new HBox(14, left, right);
-        HBox.setHgrow(left, Priority.ALWAYS);
-        right.setPrefWidth(420);
-        right.setMinWidth(380);
-        columns.setPadding(new Insets(4, 18, 18, 18));
-        body.setCenter(columns);
+        body.setCenter(content(stage));
 
         StackPane root = new StackPane(backgroundLayer(), body);
         Rectangle2D screen = Screen.getPrimary().getVisualBounds();
@@ -237,6 +245,27 @@ public class TouchDemo extends Application {
         stage.setMinWidth(900);
         stage.setMinHeight(620);
         stage.show();
+        TestKit.autorun(suite);
+    }
+
+    /**
+     * The lab without its header bar, which the tests launcher shows in a tab.
+     */
+    Region content(Stage stage) {
+        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        VBox left = column(touchCard(), card("Tests", suite.view()));
+        VBox right = column(gestureCard(), eventsCard());
+        VBox.setVgrow(left.getChildren().getFirst(), Priority.ALWAYS);
+        HBox columns = new HBox(14, left, right);
+        HBox.setHgrow(left, Priority.ALWAYS);
+        right.setPrefWidth(420);
+        right.setMinWidth(380);
+        columns.setPadding(new Insets(4, 18, 18, 18));
+        ScrollPane scroll = new ScrollPane(columns);
+        scroll.setFitToWidth(true);
+        scroll.setFitToHeight(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        return scroll;
     }
 
     private Region backgroundLayer() {
@@ -331,6 +360,9 @@ public class TouchDemo extends Application {
             switch (tp.getState()) {
                 case PRESSED -> {
                     placeholder.setVisible(false);
+                    if (e.getTouchCount() >= 2) {
+                        multiTest.pass(e.getTouchCount() + " touch points at once");
+                    }
                     if (!keepTrails.isSelected() && e.getTouchCount() == 1) {
                         clearTrails();
                     }
@@ -357,6 +389,11 @@ public class TouchDemo extends Application {
                     }
                 }
                 case RELEASED -> {
+                    if (lastById.containsKey(id)) {
+                        touchTest.pass("id " + id + " pressed and released");
+                    } else {
+                        touchTest.fail("TOUCH_RELEASED for id " + id + ", which was not pressed");
+                    }
                     lastById.remove(id);
                     Node marker = markerById.remove(id);
                     if (marker != null) {
@@ -376,6 +413,9 @@ public class TouchDemo extends Application {
             if (e.getEventType() == MouseEvent.MOUSE_PRESSED || e.getEventType() == MouseEvent.MOUSE_RELEASED
                     || e.getEventType() == MouseEvent.MOUSE_DRAGGED) {
                 count(e.isSynthesized() ? SYNTHESIZED_MOUSE : e.getEventType());
+                if (e.getEventType() == MouseEvent.MOUSE_PRESSED && e.isSynthesized()) {
+                    synthTest.pass("MOUSE_PRESSED synthesized from a touch");
+                }
                 if (e.getEventType() != MouseEvent.MOUSE_DRAGGED) {
                     log(e.getEventType() + (e.isSynthesized() ? " (synthesized from touch)" : " (pointer)"));
                 }
@@ -448,6 +488,7 @@ public class TouchDemo extends Application {
         area.addEventHandler(ZoomEvent.ANY, e -> {
             count(e.getEventType());
             if (e.getEventType() == ZoomEvent.ZOOM) {
+                zoomTest.pass(String.format(Locale.ROOT, "factor %.3f, %s", e.getZoomFactor(), source(e)));
                 double scale = clamp(photo.getScaleX() * e.getZoomFactor(), 0.2, 6);
                 photo.setScaleX(scale);
                 photo.setScaleY(scale);
@@ -458,6 +499,7 @@ public class TouchDemo extends Application {
         area.addEventHandler(RotateEvent.ANY, e -> {
             count(e.getEventType());
             if (e.getEventType() == RotateEvent.ROTATE) {
+                rotateTest.pass(String.format(Locale.ROOT, "angle %.2f°, %s", e.getAngle(), source(e)));
                 photo.setRotate(photo.getRotate() + e.getAngle());
             }
             gesture(e, String.format(Locale.ROOT, "angle %.2f°, total %.2f°", e.getAngle(), e.getTotalAngle()));
@@ -465,6 +507,10 @@ public class TouchDemo extends Application {
         });
         area.addEventHandler(ScrollEvent.ANY, e -> {
             count(e.getEventType());
+            if (e.getEventType() == ScrollEvent.SCROLL && e.isDirect() && e.getTouchCount() > 0) {
+                touchScrollTest.pass(String.format(Locale.ROOT, "delta %.1f, %.1f with %d touches",
+                        e.getDeltaX(), e.getDeltaY(), e.getTouchCount()));
+            }
             photo.setTranslateX(photo.getTranslateX() + e.getDeltaX());
             photo.setTranslateY(photo.getTranslateY() + e.getDeltaY());
             gesture(e, String.format(Locale.ROOT, "delta %.1f, %.1f · total %.1f, %.1f · %d touches%s",
@@ -474,6 +520,7 @@ public class TouchDemo extends Application {
         });
         area.addEventHandler(SwipeEvent.ANY, e -> {
             count(e.getEventType());
+            swipeTest.pass(e.getEventType() + " with " + e.getTouchCount() + " touches, " + source(e));
             showSwipe(e.getEventType());
             gesture(e, e.getTouchCount() + " touches");
             log(e.getEventType() + " with " + e.getTouchCount() + " touches"
@@ -512,6 +559,10 @@ public class TouchDemo extends Application {
         Label hint = muted("On a touch screen use two fingers; on a touchpad pinch, rotate, scroll with two "
                 + "fingers and swipe with three. Ctrl + wheel does not zoom: only real gestures do.");
         return card("Gestures", area, grid, reset, hint);
+    }
+
+    private static String source(GestureEvent e) {
+        return e.isDirect() ? "touch screen" : "touchpad";
     }
 
     private void gesture(GestureEvent e, String detail) {

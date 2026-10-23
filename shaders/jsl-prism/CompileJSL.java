@@ -471,6 +471,7 @@ public class CompileJSL {
         nameMap.put(JSLC.OUT_ES2, "prism-es2/build/gensrc/{pkg}/es2/glsl/{name}.frag");
         nameMap.put(JSLC.OUT_MTL, "prism-mtl/build/gensrc/{pkg}/mtl/msl/{name}.metal");
         nameMap.put(JSLC.OUT_VK, "prism-vk/build/gensrc/{pkg}/vk/glsl/{name}.frag");
+        nameMap.put(JSLC.OUT_GL, "prism-gl/build/gensrc/{pkg}/gl/glsl/{name}.frag");
         jslcinfo.parseAllArgs(args);
 
         boolean alphaTest = false;

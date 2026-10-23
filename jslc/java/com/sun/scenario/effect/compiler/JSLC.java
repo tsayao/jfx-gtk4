@@ -26,6 +26,7 @@
 package com.sun.scenario.effect.compiler;
 
 import com.sun.scenario.effect.compiler.backend.hw.ES2Backend;
+import com.sun.scenario.effect.compiler.backend.hw.GLBackend;
 import com.sun.scenario.effect.compiler.backend.hw.HLSLBackend;
 import com.sun.scenario.effect.compiler.backend.hw.MSLBackend;
 import com.sun.scenario.effect.compiler.backend.hw.VKBackend;
@@ -69,6 +70,7 @@ public class JSLC {
     public static final int OUT_ME_JAVA         = (1 << 7);
     public static final int OUT_ME_NATIVE       = (1 << 8);
     public static final int OUT_VK              = (1 << 9);
+    public static final int OUT_GL              = (1 << 10);
 
     public static final int OUT_ME       = OUT_ME_JAVA | OUT_ME_NATIVE;
     public static final int OUT_SSE      = OUT_SSE_JAVA | OUT_SSE_NATIVE;
@@ -77,7 +79,7 @@ public class JSLC {
     public static final int OUT_HW_PEERS   = OUT_PRISM;
     public static final int OUT_ALL_PEERS  = OUT_SW_PEERS | OUT_HW_PEERS;
 
-    public static final int OUT_HW_SHADERS = OUT_D3D | OUT_ES2 | OUT_MTL | OUT_VK;
+    public static final int OUT_HW_SHADERS = OUT_D3D | OUT_ES2 | OUT_MTL | OUT_VK | OUT_GL;
 
     private static final String rootPkg = "com/sun/scenario/effect";
     public static final STGroup group;
@@ -135,17 +137,18 @@ public class JSLC {
      *   ../decora-es2/build/gensrc/     + rootPkg + /impl/es2/glsl
      *   ../decora-prism-ps/build/gensrc/+ rootPkg + /impl/prism/ps
      */
-    private static final Map<Integer, String> DEFAULT_INFO_MAP = Map.of(
-        OUT_D3D,        "decora-d3d/build/gensrc/{pkg}/impl/hw/d3d/hlsl/{name}.hlsl",
-        OUT_MTL,        "decora-mtl/build/gensrc/{pkg}/impl/hw/mtl/msl/{name}.metal",
-        OUT_ES2,        "decora-es2/build/gensrc/{pkg}/impl/es2/glsl/{name}.frag",
-        OUT_VK,         "decora-vk/build/gensrc/{pkg}/impl/hw/vk/glsl/{name}.frag",
-        OUT_JAVA,       "decora-jsw/build/gensrc/{pkg}/impl/sw/java/JSW{name}Peer.java",
-        OUT_PRISM,      "decora-prism-ps/build/gensrc/{pkg}/impl/prism/ps/PPS{name}Peer.java",
-        OUT_SSE_JAVA,   "decora-sse/build/gensrc/{pkg}/impl/sw/sse/SSE{name}Peer.java",
-        OUT_ME_JAVA,    "decora-me/build/gensrc/{pkg}/impl/sw/me/ME{name}Peer.java",
-        OUT_SSE_NATIVE, "decora-sse-native/build/gensrc/SSE{name}Peer.cc",
-        OUT_ME_NATIVE,  "decora-me-native/build/gensrc/ME{name}Peer.cc");
+    private static final Map<Integer, String> DEFAULT_INFO_MAP = Map.ofEntries(
+        Map.entry(OUT_D3D, "decora-d3d/build/gensrc/{pkg}/impl/hw/d3d/hlsl/{name}.hlsl"),
+        Map.entry(OUT_MTL, "decora-mtl/build/gensrc/{pkg}/impl/hw/mtl/msl/{name}.metal"),
+        Map.entry(OUT_ES2, "decora-es2/build/gensrc/{pkg}/impl/es2/glsl/{name}.frag"),
+        Map.entry(OUT_VK, "decora-vk/build/gensrc/{pkg}/impl/hw/vk/glsl/{name}.frag"),
+        Map.entry(OUT_GL, "decora-gl/build/gensrc/{pkg}/impl/hw/gl/glsl/{name}.frag"),
+        Map.entry(OUT_JAVA, "decora-jsw/build/gensrc/{pkg}/impl/sw/java/JSW{name}Peer.java"),
+        Map.entry(OUT_PRISM, "decora-prism-ps/build/gensrc/{pkg}/impl/prism/ps/PPS{name}Peer.java"),
+        Map.entry(OUT_SSE_JAVA, "decora-sse/build/gensrc/{pkg}/impl/sw/sse/SSE{name}Peer.java"),
+        Map.entry(OUT_ME_JAVA, "decora-me/build/gensrc/{pkg}/impl/sw/me/ME{name}Peer.java"),
+        Map.entry(OUT_SSE_NATIVE, "decora-sse-native/build/gensrc/SSE{name}Peer.cc"),
+        Map.entry(OUT_ME_NATIVE, "decora-me-native/build/gensrc/ME{name}Peer.cc"));
 
     public static ParserInfo compile(JSLCInfo jslcinfo,
                                      String str,
@@ -251,6 +254,18 @@ public class JSLC {
                 write(vkBackend.getShader(), outFile);
                 String layoutName = outFile.getName().replaceAll("\\.frag$", ".layout");
                 write(vkBackend.getLayout(), new File(outFile.getParentFile(), layoutName));
+            }
+        }
+
+        if ((outTypes & OUT_GL) != 0) {
+            File outFile = jslcinfo.getOutputFile(OUT_GL);
+            if (jslcinfo.force || outOfDate(outFile, sourceTime)) {
+                if (pinfo == null) pinfo = getParserInfo(stream);
+                GLBackend glBackend = new GLBackend(pinfo.parser, pinfo.visitor);
+                glBackend.scan(pinfo.program);
+                write(glBackend.getShader(), outFile);
+                String layoutName = outFile.getName().replaceAll("\\.frag$", ".layout");
+                write(glBackend.getLayout(), new File(outFile.getParentFile(), layoutName));
             }
         }
 
@@ -372,7 +387,7 @@ public class JSLC {
             String prefix0 = "Usage: java "+prog+" ";
             String prefix1 = "";
             for (int i = 0; i < prefix0.length(); i++) prefix1 += " ";
-            out.println(prefix0+"[-d3d | -es2 | -mtl | -vk | -java | -sse | -me | -sw | -hw | -all]");
+            out.println(prefix0+"[-d3d | -es2 | -mtl | -vk | -gl | -java | -sse | -me | -sw | -hw | -all]");
             out.println(prefix1+"[-o <outdir>] [-i <srcdir>] [-t]");
             out.println(prefix1+"[-name <name>] [-ifname <interface name>]");
             if (extraOpts != null) {
@@ -420,6 +435,8 @@ public class JSLC {
                 outTypes |= OUT_MTL;
             } else if (arg.equals("-vk")) {
                 outTypes |= OUT_VK;
+            } else if (arg.equals("-gl")) {
+                outTypes |= OUT_GL;
             } else if (arg.equals("-java")) {
                 outTypes |= OUT_JAVA;
             } else if (arg.equals("-sse")) {

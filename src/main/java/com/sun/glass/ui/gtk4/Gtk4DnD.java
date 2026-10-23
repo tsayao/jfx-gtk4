@@ -87,6 +87,28 @@ final class Gtk4DnD {
     }
 
     /**
+     * The action to recommend to JavaFX for a drop, which must be a single
+     * one, like the suggested action of GTK 3: the action of the drop when it
+     * has one, as when the compositor chose it, otherwise the one that the
+     * modifiers choose, Ctrl+Shift for LINK, Shift for MOVE and Ctrl or none
+     * for COPY, or the first available.
+     */
+    static int recommendedAction(int gdkActions) {
+        if (Integer.bitCount(gdkActions) <= 1) {
+            return toGlassAction(gdkActions);
+        }
+        GdkDevice keyboard = GdkDisplay.getDefault().getDefaultSeat().getKeyboard();
+        int state = keyboard == null || keyboard.isNull() ? 0 : keyboard.getModifierState();
+        boolean shift = (state & Gdk.SHIFT_MASK) != 0;
+        boolean ctrl = (state & Gdk.CONTROL_MASK) != 0;
+        int preferred = shift && ctrl ? Gdk.ACTION_LINK : shift ? Gdk.ACTION_MOVE : Gdk.ACTION_COPY;
+        if ((gdkActions & preferred) == 0) {
+            preferred = preferredGdkAction(toGlassAction(gdkActions));
+        }
+        return toGlassAction(preferred);
+    }
+
+    /**
      * Reduces actions to the single preferred one GDK expects.
      */
     static int preferredGdkAction(int glassActions) {

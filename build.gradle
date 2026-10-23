@@ -39,6 +39,7 @@ def shaderCompilerArgs = jfxModuleArgs + exportsOf(shaderCompilerPackages)
 def genDir = layout.buildDirectory.dir('generated/sources')
 def gensrc = layout.buildDirectory.dir('gensrc')
 def spirvDir = layout.buildDirectory.dir('spirv')
+def glslDir = layout.buildDirectory.dir('glsl')
 
 repositories {
     mavenCentral()
@@ -72,6 +73,7 @@ sourceSets {
     main {
         java.srcDirs += [genDir.map { it.dir('gtk4') }, genDir.map { it.dir('vk') }]
         resources.srcDir spirvDir.map { it.dir('resources') }
+        resources.srcDir glslDir.map { it.dir('resources') }
     }
 }
 
@@ -102,6 +104,8 @@ def gtk4Classes = [
         "GLib.Bytes",
         "GLib.Variant",
         "GLib.VariantType",
+        "Gio.AppLaunchContext",
+        "Gdk.AppLaunchContext",
         "Gio.ListModel",
         "Gio.ListStore",
         "Gio.File",
@@ -372,7 +376,8 @@ tasks.register('generatePrismShaders') {
                 classpath = cp
                 mainClass = 'CompileJSL'
                 jvmArgs = shaderCompilerArgs
-                args = ['-i', sourceDir, '-o', destinationDir, '-t', '-pkg', 'com/sun/prism', '-vk', '-name', jsl]
+                args = ['-i', sourceDir, '-o', destinationDir, '-t', '-pkg', 'com/sun/prism', '-vk', '-gl',
+                        '-name', jsl]
             }
         }
     }
@@ -391,7 +396,7 @@ tasks.register('generateDecoraShaders') {
             classpath = cp
             mainClass = 'GenAllDecoraShaders'
             jvmArgs = shaderCompilerArgs
-            args = ['-i', sourceDir, '-o', destinationDir, '-t', '-pkg', 'com/sun/scenario/effect', '-vk',
+            args = ['-i', sourceDir, '-o', destinationDir, '-t', '-pkg', 'com/sun/scenario/effect', '-vk', '-gl',
                     '-all', 'GenAllDecoraShaders']
         }
     }
@@ -421,6 +426,45 @@ tasks.register('compileVKStaticShaders', com.sun.javafx.gradle.CompileSPIRVTask)
 
 // Plugin
 
+// OpenGL: the GLSL that the JSL compiler generates is used as is, and the
+// static shaders of Vulkan are turned into OpenGL 4.5 core shaders
+
+tasks.register('copyPrismGLShaders', Copy) {
+    dependsOn 'generatePrismShaders'
+    from gensrc.map { it.dir('jsl-prism/com/sun/prism/gl/glsl') }
+    into glslDir.map { it.dir('resources/com/sun/prism/gl/glsl') }
+}
+
+tasks.register('copyDecoraGLShaders', Copy) {
+    dependsOn 'generateDecoraShaders'
+    from gensrc.map { it.dir('jsl-decora/com/sun/scenario/effect/impl/hw/gl/glsl') }
+    into glslDir.map { it.dir('resources/com/sun/scenario/effect/impl/hw/gl/glsl') }
+}
+
+tasks.register('generateGLStaticShaders') {
+    description = 'Turns the static Vulkan shaders into OpenGL 4.5 core shaders'
+    def sourceDir = file('shaders/vk')
+    def destinationDir = glslDir.get().dir('resources/com/sun/prism/gl/glsl').asFile
+    inputs.dir sourceDir
+    outputs.dir destinationDir
+    doLast {
+        destinationDir.mkdirs()
+        fileTree(sourceDir) { include '*.vert', '*.frag' }.each { f ->
+            def text = f.getText('UTF-8')
+                // OpenGL has no descriptor sets
+                .replace('set = 0, ', '')
+                // The push constants become a uniform block at binding 1
+                .replace('layout(push_constant) uniform', 'layout(std140, binding = 1) uniform')
+                .replaceFirst(/(?m)^#version 450$/, '#version 450 core')
+            // Specialization constants become macros, which the pipeline defines
+            text = text.replaceAll(/(?m)^layout\(constant_id = \d+\) const \w+ (\w+) = ([^;]+);(.*)$/) { all, name, value, comment ->
+                "#ifndef ${name}\n#define ${name} ${value}${comment}\n#endif"
+            }
+            new File(destinationDir, f.name).setText(text, 'UTF-8')
+        }
+    }
+}
+
 tasks.named('compileJava') {
     dependsOn 'generateGtk4Wrappers', 'generateVulkanBindings'
     options.compilerArgs += jfxModuleArgs
@@ -428,6 +472,7 @@ tasks.named('compileJava') {
 
 tasks.named('processResources') {
     dependsOn 'compilePrismSPIRVShaders', 'compileDecoraSPIRVShaders', 'compileVKStaticShaders'
+    dependsOn 'copyPrismGLShaders', 'copyDecoraGLShaders', 'generateGLStaticShaders'
 }
 
 tasks.named('jar') {

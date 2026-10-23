@@ -31,6 +31,9 @@ import java.util.HashMap;
  */
 final class Gtk4DnDClipboard extends SystemClipboard {
 
+    // While the source gets DRAG_DONE, which may read the dragboard
+    private boolean finishing;
+
     Gtk4DnDClipboard() {
         super(Clipboard.DND);
     }
@@ -38,12 +41,17 @@ final class Gtk4DnDClipboard extends SystemClipboard {
     @Override
     protected void pushToSystem(HashMap<String, Object> cacheData, int supportedActions) {
         int performedAction = Gtk4DnD.executeDrag(cacheData, supportedActions);
-        actionPerformed(performedAction);
+        finishing = true;
+        try {
+            actionPerformed(performedAction);
+        } finally {
+            finishing = false;
+        }
     }
 
     @Override
     protected boolean isOwner() {
-        return Gtk4DnD.isDragging() || Gtk4DnD.isLocalDrop();
+        return finishing || Gtk4DnD.isDragging() || Gtk4DnD.isLocalDrop();
     }
 
     @Override
@@ -63,5 +71,10 @@ final class Gtk4DnDClipboard extends SystemClipboard {
     @Override
     protected String[] mimesFromSystem() {
         return Gtk4DataTransfer.getMimeTypes(Gtk4DnD.dropSource());
+    }
+
+    @Override
+    public String[] getMimeTypes() {
+        return Gtk4DataTransfer.rawImageFirst(super.getMimeTypes());
     }
 }

@@ -51,12 +51,12 @@
 #                           desktop (none)
 #   --pipeline=vk|sw        Prism pipeline (vk)
 #   --backdrop=on|off       blur the area behind the windows (on)
-#   --toolbox=NAME          toolbox container with GNOME (jfx-gnome51), or
+#   --toolbox=NAME          toolbox container with GNOME, or
 #                           "none" to use the GNOME Shell of the host
 #   --toolbox-release=N     Fedora release of a new toolbox container (45)
 #   --wallpaper=FILE        gnome: image of the desktop (the host wallpaper)
 #                           kwin: "javafx" for the JavaFX wallpaper
-#   --size=WxH              kwin: size of the nested output (2400x1440)
+#   --size=WxH              gnome, kwin: size of the nested output (2400x1440)
 #   --scale=N               kwin: output scale (1)
 #   --screenshot=FILE       gnome: save a screenshot of the nested desktop
 #   --screenshot-delay=S    seconds to wait before the screenshot (12)
@@ -64,14 +64,19 @@
 #   --help, -h              show this help and exit
 #
 # The environment variables GDK_DISABLE and GSK_DEBUG are passed to the demos.
-# The extra JVM options are passed to the demos. Under GNOME, the robot demo
-# gets -Dglass.gtk4.testSession=gnome, which its input tests need.
+# The extra JVM options are passed to the demos. Under GNOME, the tests app and
+# the labs with tests (robot, windows, dialogs, dragdrop, clipboard, scene3d, touch,
+# accessibility) get
+# -Dglass.gtk4.testSession=gnome, which their robot tests need. The tests app
+# runs the tests of every lab, in a tab per lab; -Dtests.run=true runs them at
+# startup and -Dtests.exit=true exits afterwards, with status 1 on a failure.
 #
 # Examples:
 #   ./launcher.sh --apps=nebula,fractals
 #   ./launcher.sh --apps=all --compositor=kwin
 #   ./launcher.sh --apps=stage --compositor=gnome
 #   ./launcher.sh --apps=robot --compositor=gnome
+#   ./launcher.sh --apps=tests --compositor=gnome -- -Dtests.run=true -Dtests.exit=true
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 DEMOS=$ROOT/demos
@@ -83,7 +88,8 @@ BACKDROP=on
 TOOLBOX=jfx-gnome51
 TOOLBOX_RELEASE=45
 TOOLBOX_PACKAGES="gnome-shell mutter-devkit dbus-daemon nautilus java-25-openjdk-devel gtk4 libadwaita \
-vulkan-loader mesa-vulkan-drivers mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts"
+vulkan-loader mesa-vulkan-drivers mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts \
+wl-clipboard python3-gobject at-spi2-core"
 WALLPAPER=
 SIZE=2400x1440
 SCALE=1
@@ -303,8 +309,8 @@ picture-options='zoom'
 EOF
     export GSETTINGS_BACKEND=keyfile
 
-    (unset WAYLAND_DISPLAY DISPLAY; exec gnome-shell --devkit --unsafe-mode --wayland \
-        --wayland-display=$SOCKET) > "$LOGS/shell.log" 2>&1 &
+    (unset WAYLAND_DISPLAY DISPLAY; exec gnome-shell --devkit --devkit-args="--monitor-size=$SIZE" \
+        --unsafe-mode --wayland --wayland-display=$SOCKET) > "$LOGS/shell.log" 2>&1 &
     CHILDREN="$CHILDREN $!"
     wait_for_socket
     for i in $(seq 1 150); do
@@ -318,8 +324,27 @@ EOF
     sleep 1
 
     export WAYLAND_DISPLAY=$SOCKET GDK_BACKEND=wayland XDG_CURRENT_DESKTOP=GNOME
-    unset DISPLAY
+    # The X display of the Xwayland of the nested shell, started on demand, for
+    # Swing; GTK stays on Wayland
+    DISPLAY=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
+        --method org.gnome.Shell.Eval "imports.gi.GLib.getenv('DISPLAY') ?? ''" 2>/dev/null \
+        | sed -n "s/^(true, '\"\(.*\)\"')$/\1/p")
+    XAUTHORITY=$(gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
+        --method org.gnome.Shell.Eval "imports.gi.GLib.getenv('XAUTHORITY') ?? ''" 2>/dev/null \
+        | sed -n "s/^(true, '\"\(.*\)\"')$/\1/p")
+    if [ -n "$DISPLAY" ]; then
+        export DISPLAY
+        [ -n "$XAUTHORITY" ] && export XAUTHORITY
+    else
+        unset DISPLAY
+    fi
     dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP > /dev/null 2>&1
+    # The bus of AT-SPI activates its registry through systemd, which the private
+    # session does not have: start it here, for screen readers and the tests
+    if [ -x /usr/libexec/at-spi2-registryd ]; then
+        (/usr/libexec/at-spi2-registryd) > "$LOGS/atspi.log" 2>&1 &
+        CHILDREN="$CHILDREN $!"
+    fi
     if [ -n "$SCREENSHOT" ]; then
         (sleep "$SCREENSHOT_DELAY"
          gdbus call --session --dest org.gnome.Shell.Screenshot --object-path /org/gnome/Shell/Screenshot \
@@ -372,9 +397,11 @@ for class in $CLASSES; do
     name=$(printf '%s' "${class%Demo}" | tr '[:upper:]' '[:lower:]')
     # The robot generates input through the remote desktop session of GNOME
     TEST_SESSION=
-    if [ "$class" = RobotDemo ] && [ "$COMPOSITOR" = gnome ]; then
-        TEST_SESSION=-Dglass.gtk4.testSession=gnome
-    fi
+    case "$class" in
+        TestsDemo|RobotDemo|WindowsDemo|DialogsDemo|DragDropDemo|ClipboardDemo|Scene3DDemo|SwingDemo|\
+        TouchDemo|AccessibilityDemo)
+            [ "$COMPOSITOR" = gnome ] && TEST_SESSION=-Dglass.gtk4.testSession=gnome ;;
+    esac
     (run -Dprism.verbose=true -Djavafx.enablePreview=true \
         -Djavafx.suppressPreviewWarning=true $TEST_SESSION $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
         | tee "$LOGS/$name.log" | sed -u "s/^/[$name] /") &
