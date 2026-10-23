@@ -31,7 +31,12 @@
 #          GNOME than the one of the host can be used. The desktop shows the
 #          wallpaper of the host. When the container does not exist, the
 #          launcher asks before creating it.
-#   kwin   KWin over the Plasma desktop, when plasmashell is installed.
+#   kde    KWin and the Plasma desktop in a toolbox container of Fedora
+#          Rawhide, created in the same way.
+#   hyprland
+#          Hyprland in a toolbox container of Fedora Rawhide, created in the
+#          same way, with the lionheartp/Hyprland COPR, as Fedora does not
+#          ship Hyprland.
 #
 # A nested compositor runs on a private D-Bus session with its own settings,
 # so it leaves the running desktop untouched, and is closed when the last demo
@@ -45,19 +50,22 @@
 # Options:
 #   --apps=a,b,...          demos to run, by name (see --list), or "all"
 #                           (eyecandy)
-#   --compositor=gnome|kwin|none
+#   --compositor=gnome|kde|hyprland|none
 #                           nested compositor, or none for the current
 #                           desktop (none)
 #   --pipeline=auto|vk|gl|sw
 #                           Prism pipeline: Vulkan, OpenGL 4.5 or software;
 #                           auto tries them in that order (auto)
 #   --backdrop=on|off       blur the area behind the windows (on)
-#   --toolbox=NAME          toolbox container with GNOME, or
-#                           "none" to use the GNOME Shell of the host
-#   --toolbox-release=N     Fedora release of a new toolbox container (45)
+#   --toolbox=NAME          toolbox container of the nested compositor
+#                           (jfx-gnome51, jfx-kde, jfx-hyprland), or "none" to use the
+#                           compositor of the host
+#   --toolbox-release=N     Fedora release of a new toolbox container, a
+#                           number or rawhide (gnome: 45, kde and
+#                           hyprland: rawhide)
 #   --wallpaper=FILE        gnome: image of the desktop (the host wallpaper)
-#   --size=WxH              gnome, kwin: size of the nested output (2400x1440)
-#   --scale=N               kwin: output scale (1)
+#   --size=WxH              gnome, kde, hyprland: size of the nested output (2400x1440)
+#   --scale=N               kde, hyprland: output scale (1)
 #   --monitors=WxH@S,...    gnome: monitors of the nested shell, side by side,
 #                           with their scales, each in a window of its own
 #                           without --headless (SIZE@1); with --headless the
@@ -66,7 +74,7 @@
 #   --headless              gnome: run the nested shell without a window, on
 #                           a virtual monitor of --size: nothing shows on the
 #                           desktop and the focus on the host does not matter
-#   --screenshot=FILE       gnome: save a screenshot of the nested desktop
+#   --screenshot=FILE       gnome, kde: save a screenshot of the nested desktop
 #   --screenshot-delay=S    seconds to wait before the screenshot (12);
 #                           with --headless, the session then ends
 #   --list                  list the demos and exit
@@ -83,7 +91,7 @@
 #
 # Examples:
 #   ./launcher.sh
-#   ./launcher.sh --apps=eyecandy --compositor=kwin -- -Deyecandy.show=fractals
+#   ./launcher.sh --apps=eyecandy --compositor=kde -- -Deyecandy.show=fractals
 #   ./launcher.sh --apps=tests
 #   ./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
 
@@ -94,11 +102,13 @@ APPS=eyecandy
 COMPOSITOR=none
 PIPELINE=auto
 BACKDROP=on
-TOOLBOX=jfx-gnome51
-TOOLBOX_RELEASE=45
-TOOLBOX_PACKAGES="gnome-shell mutter-devkit dbus-daemon nautilus java-25-openjdk-devel gtk4 libadwaita \
-vulkan-loader mesa-vulkan-drivers mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts \
-wl-clipboard python3-gobject at-spi2-core"
+TOOLBOX=
+TOOLBOX_RELEASE=
+# A COPR repository enabled in the container before installing
+TOOLBOX_COPR=
+# What the demos and the tests need, besides the compositor
+TOOLBOX_PACKAGES="dbus-daemon java-25-openjdk-devel gtk4 libadwaita vulkan-loader mesa-vulkan-drivers \
+mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts wl-clipboard python3-gobject at-spi2-core"
 WALLPAPER=
 SIZE=2400x1440
 SCALE=1
@@ -144,8 +154,18 @@ while [ $# -gt 0 ]; do
 done
 
 case "$COMPOSITOR" in
-    gnome|kwin|none) ;;
-    *) echo "Unknown compositor: $COMPOSITOR (gnome, kwin or none)" >&2; exit 2 ;;
+    gnome)
+        : "${TOOLBOX:=jfx-gnome51}" "${TOOLBOX_RELEASE:=45}"
+        TOOLBOX_PACKAGES="gnome-shell mutter-devkit nautilus $TOOLBOX_PACKAGES" ;;
+    kde)
+        : "${TOOLBOX:=jfx-kde}" "${TOOLBOX_RELEASE:=rawhide}"
+        TOOLBOX_PACKAGES="kwin plasma-workspace kf6-kconfig xdg-desktop-portal-kde breeze-gtk-gtk4 spectacle $TOOLBOX_PACKAGES" ;;
+    hyprland)
+        : "${TOOLBOX:=jfx-hyprland}" "${TOOLBOX_RELEASE:=rawhide}"
+        TOOLBOX_COPR=lionheartp/Hyprland
+        TOOLBOX_PACKAGES="hyprland xdg-desktop-portal-hyprland $TOOLBOX_PACKAGES" ;;
+    none) ;;
+    *) echo "Unknown compositor: $COMPOSITOR (gnome, kde, hyprland or none)" >&2; exit 2 ;;
 esac
 case "$PIPELINE" in
     auto) PRISM_ORDER=vk,gl,sw ;;
@@ -201,6 +221,12 @@ relaunch() {
 JVM_OPTIONS="$*"
 
 ensure_toolbox() {
+    if ! command -v toolbox > /dev/null; then
+        echo "toolbox is not installed: install it (podman-toolbox on Debian and Ubuntu, toolbox on" >&2
+        echo "Fedora; https://github.com/containers/toolbox), or use --toolbox=none to use" >&2
+        echo "the compositor of the host" >&2
+        exit 1
+    fi
     if podman container exists "$TOOLBOX" 2>/dev/null; then
         # A container created before a package joined the list, such as the
         # AT-SPI registry of the accessibility tests, gets it now
@@ -208,13 +234,16 @@ ensure_toolbox() {
             'for p in "$@"; do rpm -q "$p" > /dev/null 2>&1 || printf "%s " "$p"; done' sh $TOOLBOX_PACKAGES)
         if [ -n "$missing" ]; then
             echo "Installing in $TOOLBOX: $missing"
+            enable_copr
             toolbox run --container "$TOOLBOX" sudo dnf install -y $missing || exit 1
         fi
         return
     fi
     echo "The toolbox container $TOOLBOX does not exist. It can be created from Fedora $TOOLBOX_RELEASE"
-    echo "(GNOME 51 is in Fedora 45), with the packages:"
+    [ "$COMPOSITOR" = gnome ] && echo "(GNOME 51 is in Fedora 45)"
+    echo "with the packages:"
     echo "  $TOOLBOX_PACKAGES"
+    [ -n "$TOOLBOX_COPR" ] && echo "from Fedora and the COPR repository $TOOLBOX_COPR"
     printf 'Create it? [y/N] '
     answer=
     if ! { read -r answer < /dev/tty; } 2>/dev/null; then
@@ -223,19 +252,31 @@ ensure_toolbox() {
     case "$answer" in
         y|Y|yes|s|S|sim) ;;
         *)
-            echo "Not created; use --toolbox=none to use the GNOME Shell of the host" >&2
+            echo "Not created; use --toolbox=none to use the compositor of the host" >&2
             exit 1
             ;;
     esac
-    toolbox --assumeyes create --distro fedora --release "$TOOLBOX_RELEASE" "$TOOLBOX" || exit 1
+    if [ "$TOOLBOX_RELEASE" = rawhide ]; then
+        # toolbox only takes release numbers
+        toolbox --assumeyes create --image registry.fedoraproject.org/fedora-toolbox:rawhide "$TOOLBOX" || exit 1
+    else
+        toolbox --assumeyes create --distro fedora --release "$TOOLBOX_RELEASE" "$TOOLBOX" || exit 1
+    fi
+    enable_copr
     toolbox run --container "$TOOLBOX" sudo dnf install -y $TOOLBOX_PACKAGES || exit 1
 }
 
-if [ "$COMPOSITOR" = gnome ]; then
-    if [ -z "$WALLPAPER" ]; then
-        WALLPAPER=$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null \
-            | sed -e "s/^'//" -e "s/'$//" -e 's|^file://||')
+enable_copr() {
+    if [ -n "$TOOLBOX_COPR" ]; then
+        toolbox run --container "$TOOLBOX" sudo dnf copr enable -y "$TOOLBOX_COPR" || exit 1
     fi
+}
+
+if [ "$COMPOSITOR" = gnome ] && [ -z "$WALLPAPER" ]; then
+    WALLPAPER=$(gsettings get org.gnome.desktop.background picture-uri 2>/dev/null \
+        | sed -e "s/^'//" -e "s/'$//" -e 's|^file://||')
+fi
+if [ "$COMPOSITOR" != none ]; then
     if [ "$TOOLBOX" != none ] && [ ! -f /run/.toolboxenv ]; then
         ensure_toolbox
         relaunch toolbox run --container "$TOOLBOX" env GDK_DISABLE="$GDK_DISABLE" GSK_DEBUG="$GSK_DEBUG"
@@ -244,7 +285,7 @@ if [ "$COMPOSITOR" = gnome ]; then
 fi
 
 LOGS=${TMPDIR:-/tmp}/jfx-wayland-launcher-$COMPOSITOR
-[ "$COMPOSITOR" = gnome ] && LOGS=$LOGS-$TOOLBOX
+[ "$COMPOSITOR" != none ] && LOGS=$LOGS-$TOOLBOX
 mkdir -p "$LOGS"
 
 # The demos run with a copy of the plugin, which a build can then replace
@@ -257,11 +298,21 @@ fi
 
 if [ "$COMPOSITOR" != none ] && [ -z "$LAUNCHER_SESSION" ]; then
     export LAUNCHER_SESSION=1
+    # The buttons of the window titles, from the settings of the host, which
+    # the private session does not see; under KDE, those of KWin
+    if [ "$COMPOSITOR" = kde ]; then
+        export LAUNCHER_BUTTON_LAYOUT='icon:minimize,maximize,close'
+    else
+        LAUNCHER_BUTTON_LAYOUT=$(gsettings get org.gnome.desktop.wm.preferences button-layout 2>/dev/null \
+            | sed -e "s/^'//" -e "s/'$//")
+        export LAUNCHER_BUTTON_LAYOUT=${LAUNCHER_BUTTON_LAYOUT:-:minimize,maximize,close}
+    fi
     # The services of the private session get a dconf database of their own, as
     # a write to the user database also notifies the dconf clients of the host
     # (through XDG_RUNTIME_DIR/dconf), and the GNOME Shell of the host can crash
-    # on that
-    printf 'user-db:jfx-wayland-launcher\n' > "$LOGS/dconf-profile"
+    # on that. One per compositor, named without dashes, which the D-Bus object
+    # path of the dconf writer cannot have
+    printf 'user-db:jfx_wayland_launcher_%s\n' "$COMPOSITOR" > "$LOGS/dconf-profile"
     export DCONF_PROFILE=$LOGS/dconf-profile
     relaunch dbus-run-session --
     exit $?
@@ -433,12 +484,7 @@ EOF
         unset DISPLAY
     fi
     dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP > /dev/null 2>&1
-    # The bus of AT-SPI activates its registry through systemd, which the private
-    # session does not have: start it here, for screen readers and the tests
-    if [ -x /usr/libexec/at-spi2-registryd ]; then
-        (/usr/libexec/at-spi2-registryd) > "$LOGS/atspi.log" 2>&1 &
-        CHILDREN="$CHILDREN $!"
-    fi
+    start_atspi
     if [ -n "$SCREENSHOT" ]; then
         (sleep "$SCREENSHOT_DELAY"
          gdbus call --session --dest org.gnome.Shell.Screenshot --object-path /org/gnome/Shell/Screenshot \
@@ -449,13 +495,25 @@ EOF
     fi
 }
 
+# The bus of AT-SPI activates its registry through systemd, which the private
+# session does not have: start it here, for screen readers and the tests
+start_atspi() {
+    if [ -x /usr/libexec/at-spi2-registryd ]; then
+        (/usr/libexec/at-spi2-registryd) > "$LOGS/atspi.log" 2>&1 &
+        CHILDREN="$CHILDREN $!"
+    fi
+}
+
 kde() {
     exec env XDG_CONFIG_HOME="$LOGS/config" XDG_CURRENT_DESKTOP=KDE KDE_FULL_SESSION=true \
         KDE_SESSION_VERSION=6 QT_QPA_PLATFORM=wayland "$@"
 }
 
-start_kwin() {
+start_kde() {
     mkdir -p "$LOGS/config"
+    # The portals, activated by the private bus, and the demos then pick the
+    # KDE implementations, not the ones of the desktop of the host
+    export XDG_CURRENT_DESKTOP=KDE
     (kde kwriteconfig6 --file kded6rc --group Module-plasma_welcome --key autoload false)
     (kde kwriteconfig6 --file ksplashrc --group KSplash --key Engine none)
     (kde kwriteconfig6 --file ksplashrc --group KSplash --key Theme None)
@@ -468,11 +526,60 @@ start_kwin() {
     wait_for_socket
 
     export WAYLAND_DISPLAY=$SOCKET
+    dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP > /dev/null 2>&1
+    start_atspi
+    # The GTK theme of Plasma, which kde-gtk-config sets in a full session;
+    # GDK reads it from the settings of the private session
+    gsettings set org.gnome.desktop.interface gtk-theme Breeze 2>/dev/null
     if command -v plasmashell > /dev/null; then
         (kde plasmashell --no-respawn) > "$LOGS/plasma.log" 2>&1 &
         CHILDREN="$CHILDREN $!"
     fi
     sleep 3
+    if [ -n "$SCREENSHOT" ]; then
+        # Spectacle may take screenshots through KWin
+        (sleep "$SCREENSHOT_DELAY"
+         kde spectacle --background --nonotify --fullscreen --output "$SCREENSHOT") > /dev/null 2>&1 &
+        CHILDREN="$CHILDREN $!"
+    fi
+}
+
+start_hyprland() {
+    cat > "$LOGS/hyprland.conf" <<EOF
+monitor = , $SIZE, auto, $SCALE
+misc {
+    disable_hyprland_logo = true
+    disable_splash_rendering = true
+}
+EOF
+    export XDG_CURRENT_DESKTOP=Hyprland
+    (exec start-hyprland -- --config "$LOGS/hyprland.conf") > "$LOGS/hyprland.log" 2>&1 &
+    watchdog=$!
+    CHILDREN="$CHILDREN $watchdog"
+    # Hyprland names its socket itself, and writes it in the lock of its
+    # instance, after its pid, a child of the watchdog
+    socket=
+    for i in $(seq 1 100); do
+        for lock in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/hypr/*/hyprland.lock; do
+            [ -f "$lock" ] || continue
+            pid=$(sed -n 1p "$lock")
+            if [ "$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)" = "$watchdog" ]; then
+                socket=$(sed -n 2p "$lock")
+            fi
+        done
+        [ -n "$socket" ] && break
+        sleep 0.2
+    done
+    if [ -z "$socket" ]; then
+        echo "The nested compositor did not start, see $LOGS" >&2
+        exit 1
+    fi
+    SOCKET=$socket
+    wait_for_socket
+
+    export WAYLAND_DISPLAY=$SOCKET
+    dbus-update-activation-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP > /dev/null 2>&1
+    start_atspi
     if [ -n "$SCREENSHOT" ]; then
         echo "--screenshot is only supported with --compositor=gnome" >&2
     fi
@@ -485,6 +592,9 @@ start_none() {
 }
 
 PIDS=
+if [ -n "$LAUNCHER_BUTTON_LAYOUT" ]; then
+    gsettings set org.gnome.desktop.wm.preferences button-layout "$LAUNCHER_BUTTON_LAYOUT" 2>/dev/null
+fi
 start_$COMPOSITOR
 
 for class in $CLASSES; do

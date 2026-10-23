@@ -60,6 +60,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -70,8 +71,7 @@ public final class Gtk4Application extends Application {
     private static final int MIN_GTK_MAJOR = 4;
     private static final int MIN_GTK_MINOR = 14;
 
-    static final boolean ADWAITA = !"false".equals(System.getProperty("glass.gtk4.adwaita"))
-            && AdwWindow.isAvailable();
+    static final boolean ADWAITA = useAdwaita() && AdwWindow.isAvailable();
 
     static final boolean BACKDROP = Boolean.getBoolean("glass.gtk4.backdrop");
 
@@ -93,6 +93,20 @@ public final class Gtk4Application extends Application {
     public Gtk4Application() {
         checkRequirements();
         Gtk4TestSession.initialize();
+    }
+
+    /**
+     * Whether the windows are AdwWindows: by default only under GNOME, as
+     * elsewhere libadwaita would ignore the GTK theme of the desktop, or as
+     * -Dglass.gtk4.adwaita says.
+     */
+    private static boolean useAdwaita() {
+        String value = System.getProperty("glass.gtk4.adwaita");
+        if (value != null) {
+            return !"false".equals(value);
+        }
+        String desktop = System.getenv("XDG_CURRENT_DESKTOP");
+        return desktop != null && Arrays.stream(desktop.split(":")).anyMatch("GNOME"::equalsIgnoreCase);
     }
 
     private static float parseScale(String name) {

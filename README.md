@@ -124,7 +124,7 @@ from Maven Central, or an SDK built from source. It was tested with JavaFX
 - GTK 4.14 or later (`libgtk-4.so.1`), which has `GtkGraphicsOffload`: the
   frames are shown in a `GtkGraphicsOffload`, so that GTK can hand the
   dma-bufs to the compositor as subsurfaces. The glass refuses to start with
-  an older GTK. libadwaita is used when available.
+  an older GTK. libadwaita is used under GNOME, when available.
 - For the `vk` pipeline: the Vulkan loader (`libvulkan.so.1`) and a driver
   with Vulkan 1.3 and `VK_KHR_push_descriptor`. Frames are handed to the
   compositor as dma-bufs when the driver also has `VK_KHR_external_memory_fd`
@@ -199,7 +199,7 @@ can also be given by name: `-Dglass.platform=ext:com.sun.glass.ui.gtk4.Gtk4Platf
 |------------------------------|---------------------------------------------------------|
 | `glass.gtk4.backdrop=true`   | Blurs the area behind toplevel windows, see [Backdrop](#backdrop) |
 | `glass.gtk4.backdrop.active` | Set by the glass: whether the backdrop is in use            |
-| `glass.gtk4.adwaita=false`   | Uses `GtkWindow` instead of `AdwWindow`                  |
+| `glass.gtk4.adwaita=true\|false` | `AdwWindow` or `GtkWindow`; by default `AdwWindow` only under GNOME (`XDG_CURRENT_DESKTOP`), so that elsewhere the windows follow the GTK theme of the desktop |
 | `glass.gtk4.portal=false`    | Uses GTK file dialogs instead of the portal             |
 | `glass.gtk4.verbose=<cats>`  | Logs the given categories, or `all`                     |
 
@@ -332,7 +332,7 @@ the plugin is built first with `./gradlew jar`.
 
 ```
 ./launcher.sh
-./launcher.sh --apps=all --compositor=kwin
+./launcher.sh --apps=all --compositor=kde
 ./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.run=true -Dtests.exit=true
 ./launcher.sh --pipeline=sw --backdrop=off -- -Deyecandy.show=disco -Dglass.gtk4.verbose=all
 ```
@@ -340,23 +340,31 @@ the plugin is built first with `./gradlew jar`.
 | Option                       | Description                                                     |
 |------------------------------|-----------------------------------------------------------------|
 | `--apps=a,b,...`             | Demos to run, `eyecandy` or `tests`, or `all` (`eyecandy`)     |
-| `--compositor=none\|gnome\|kwin` | Current desktop, or a nested compositor (`none`)        |
+| `--compositor=none\|gnome\|kde\|hyprland` | Current desktop, or a nested compositor (`none`)        |
 | `--pipeline=auto\|vk\|gl\|sw`  | Prism pipeline: Vulkan, OpenGL 4.5 or software; `auto` tries them in that order (`auto`) |
 | `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |
-| `--toolbox=NAME`             | Toolbox container with GNOME 51 (`jfx-gnome51`), or `none` for the GNOME Shell of the host |
-| `--toolbox-release=N`        | Fedora release of a new toolbox container (`45`)               |
+| `--toolbox=NAME`             | Toolbox container of the compositor (`jfx-gnome51`, `jfx-kde`, `jfx-hyprland`), or `none` for the compositor of the host |
+| `--toolbox-release=N`        | Fedora release of a new toolbox container, a number or `rawhide` (gnome: `45`, kde and hyprland: `rawhide`) |
 | `--wallpaper=FILE`           | gnome: desktop image (the host wallpaper)                      |
-| `--size=WxH`, `--scale=N`    | gnome, kwin: size of the nested output (2400x1440); kwin: its scale |
+| `--size=WxH`, `--scale=N`    | gnome, kde, hyprland: size of the nested output (2400x1440); kde, hyprland: its scale |
 | `--monitors=WxH@S,...`       | gnome: monitors side by side, with their scales, each in a window of its own without `--headless` (`SIZE@1`; `tests` with `--headless`: `SIZE@1,1280x800@2`) |
 | `--headless`                 | gnome: no window on the desktop, virtual monitors instead; the host focus does not matter |
-| `--screenshot=FILE`          | gnome: screenshot of the nested desktop                        |
+| `--screenshot=FILE`          | gnome, kde: screenshot of the nested desktop                   |
 | `--list`, `--help`           | Lists the demos, or shows all the options                      |
 
 Arguments after `--` are passed to the JVM of the demos. The logs are written
 to `$TMPDIR/jfx-wayland-launcher-<compositor>`.
 
-With `--compositor=gnome`, GNOME Shell runs in a toolbox container, so that
-GNOME 51 can be used on an older host. When the container does not exist, the
-launcher asks before creating it from Fedora 45 and installing GNOME Shell,
-the JDK, GTK 4 and the Vulkan drivers in it.
+The nested compositors run in toolbox containers, so that a newer desktop
+than the one of the host can be used: with `--compositor=gnome`, GNOME Shell
+51 from Fedora 45 (`jfx-gnome51`), with `--compositor=kde`, KWin and the
+Plasma desktop from Fedora Rawhide (`jfx-kde`), and with
+`--compositor=hyprland`, Hyprland from Fedora Rawhide and the
+[lionheartp/Hyprland](https://copr.fedorainfracloud.org/coprs/lionheartp/Hyprland/)
+COPR, as Fedora does not ship it (`jfx-hyprland`). When the container does not
+exist, the launcher asks before creating it and installing the compositor,
+the JDK, GTK 4 and the Vulkan drivers in it. This needs
+[toolbox](https://github.com/containers/toolbox) (the `podman-toolbox`
+package on Debian and Ubuntu, `toolbox` on Fedora); without it, use
+`--toolbox=none` and the compositor of the host.
 
