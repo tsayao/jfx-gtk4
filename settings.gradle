@@ -1,1 +1,9 @@
+// The build runs on JDK 25: the plugin uses the foreign function and memory
+// API of JDK 25, and Gradle cannot instrument buildSrc compiled by a newer JDK
+if (JavaVersion.current().majorVersion != '25') {
+    throw new GradleException("The build needs JDK 25, not ${JavaVersion.current()} " +
+            "(${System.getProperty('java.home')}): set JAVA_HOME to a JDK 25, " +
+            "e.g. JAVA_HOME=/usr/lib/jvm/java-25 ./gradlew jar")
+}
+
 rootProject.name = 'jfx-wayland'

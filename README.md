@@ -12,8 +12,7 @@ JavaFX on Wayland.
 The project is one jar for an unmodified JavaFX with a Glass on GTK 4 for
 Wayland (`-Dglass.platform=Gtk4`) and two Prism pipelines, Vulkan (`vk`) and
 OpenGL (`gl`). It is all Java: GTK, Vulkan, EGL and libei are called through
-the Foreign Function & Memory API, with [bindings](#bindings) generated at
-build time.
+the Foreign Function & Memory API, with generated [bindings](#bindings).
 
 ### Bindings
 
@@ -32,7 +31,8 @@ build time.
   OpenGL ones resolved through `eglGetProcAddress`; libei, a small
   hand-written wrapper (`Ei`).
 
-The generated sources go to `build/generated/sources`.
+The generated sources are kept in `src/generated`, and `./gradlew
+generateBindings` regenerates them (see [Build](#build)).
 
 ### Rendering
 
@@ -72,17 +72,12 @@ accessibility, which GTK exposes to screen readers through AT-SPI.
 
 ## Requirements
 
-- JDK 25
+- JDK 25. Gradle runs its daemon on a JDK 25 of the system
+  (`gradle/gradle-daemon-jvm.properties`), whatever JDK starts it
 - A JavaFX SDK of the version the plugin is built against, since it uses
   internal APIs, with no `com.sun.glass.ui.gtk4` or `com.sun.prism.vk`
   classes in `javafx.graphics`
-- The GObject introspection files of GTK 4.22 or later (`Gtk-4.0.gir`,
-  `Gdk-4.0.gir`, `GdkWayland-4.0.gir`, `Adw-1.gir`, ...), since the wrappers
-  are generated from its API. The glass checks the version of GTK at run time,
-  so the plugin runs on GTK 4.14 or later. On a system with an older GTK, set
-  `girDir` to the `gir-1.0` directory of a newer one.
-- The Vulkan registry (`vk.xml`) and a Vulkan 1.3 driver
-- `libshaderc` or `glslc`
+- `libshaderc` or `glslc`, for the SPIR-V shaders
 
 ## Build
 
@@ -90,22 +85,26 @@ accessibility, which GTK exposes to screen readers through AT-SPI.
 ./gradlew jar -PjfxSdk=/path/to/jfx/build/sdk
 ```
 
-| Property     | Default                              |
-|--------------|--------------------------------------|
-| `jfxSdk`     | `../jfx/build/sdk`                   |
-| `girDir`     | `/usr/share/gir-1.0`                 |
-| `vkRegistry` | `/usr/share/vulkan/registry/vk.xml`  |
+The build compiles the GTK 4 wrappers and the Vulkan bindings kept in
+`src/generated`, and generates the shaders: the Vulkan GLSL of the Prism and
+Decora shaders from JSL, compiled to SPIR-V, and their OpenGL 4.5 core GLSL,
+from the `-gl` backend of the JSL compiler, with the static Vulkan shaders
+converted for OpenGL.
 
-The build generates:
+`./gradlew generateBindings` regenerates the wrappers and the bindings, for
+a change of the types or the Vulkan commands they cover (the lists in
+`build.gradle`). It needs:
 
-- the GTK 4 FFM wrappers from the GIR files (`generateGtk4Wrappers`)
-- the Vulkan FFM bindings from `vk.xml` (`generateVulkanBindings`)
-- the Vulkan GLSL of the Prism and Decora shaders from JSL, compiled to SPIR-V
-  (`generatePrismShaders`, `generateDecoraShaders`, `compile*SPIRVShaders`)
-- the OpenGL 4.5 core GLSL of the same shaders, from the `-gl` backend of the
-  JSL compiler, and of the static Vulkan shaders, whose descriptor sets, push
-  constants and specialization constants become bindings, a uniform block
-  and macros (`copy*GLShaders`, `generateGLStaticShaders`)
+- the GObject introspection files of GTK 4.22 or later (`Gtk-4.0.gir`,
+  `Gdk-4.0.gir`, `GdkWayland-4.0.gir`, `Adw-1.gir`, ...). The glass checks the
+  version of GTK at run time, so the plugin runs on GTK 4.14 or later;
+- the Vulkan registry, `vk.xml` (Fedora: `vulkan-headers`).
+
+| Property     | Default                              | Used by            |
+|--------------|--------------------------------------|--------------------|
+| `jfxSdk`     | `../jfx/build/sdk`                   | `jar`              |
+| `girDir`     | `/usr/share/gir-1.0`                 | `generateBindings` |
+| `vkRegistry` | `/usr/share/vulkan/registry/vk.xml`  | `generateBindings` |
 
 ## Run
 

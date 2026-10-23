@@ -37,6 +37,9 @@ def jfxModuleArgs = moduleArgs(jfxLib)
 def shaderCompilerArgs = jfxModuleArgs + exportsOf(shaderCompilerPackages)
 
 def genDir = layout.buildDirectory.dir('generated/sources')
+// The FFM wrappers of GTK 4 and the Vulkan bindings, kept in the repository
+// and regenerated with `gradlew generateBindings`
+def bindingsDir = file('src/generated')
 def gensrc = layout.buildDirectory.dir('gensrc')
 def spirvDir = layout.buildDirectory.dir('spirv')
 def glslDir = layout.buildDirectory.dir('glsl')
@@ -71,7 +74,7 @@ sourceSets {
         runtimeClasspath += configurations.antlr
     }
     main {
-        java.srcDirs += [genDir.map { it.dir('gtk4') }, genDir.map { it.dir('vk') }]
+        java.srcDirs += [new File(bindingsDir, 'gtk4'), new File(bindingsDir, 'vk')]
         resources.srcDir spirvDir.map { it.dir('resources') }
         resources.srcDir glslDir.map { it.dir('resources') }
     }
@@ -195,8 +198,6 @@ def gtk4Classes = [
 tasks.register('checkRequirements') {
     description = 'Checks that the files and tools needed by the build are installed'
     def sdkDir = jfxSdk
-    def gir = file(girDir)
-    def registry = file(vkRegistry)
     doLast {
         def missing = []
         ['javafx.base.jar', 'javafx.graphics.jar'].each { jar ->
@@ -214,6 +215,21 @@ tasks.register('checkRequirements') {
                 }
             }
         }
+        if (!com.sun.javafx.gradle.CompileSPIRVTask.isCompilerAvailable()) {
+            missing << 'SPIR-V compiler: libshaderc or glslc (Fedora: libshaderc or glslc)'
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing build requirements:\n  - " + missing.join('\n  - '))
+        }
+    }
+}
+
+tasks.register('checkBindingsRequirements') {
+    description = 'Checks that the files needed to generate the bindings are installed'
+    def gir = file(girDir)
+    def registry = file(vkRegistry)
+    doLast {
+        def missing = []
         girPackages.each { name, pkg ->
             if (!new File(gir, name).isFile()) {
                 missing << "GObject introspection file: ${gir}/${name} (Fedora: ${pkg}; or set -PgirDir=DIR)".toString()
@@ -245,11 +261,8 @@ tasks.register('checkRequirements') {
         if (!registry.isFile()) {
             missing << "Vulkan registry: ${registry} (Fedora: vulkan-headers; or set -PvkRegistry=FILE)".toString()
         }
-        if (!com.sun.javafx.gradle.CompileSPIRVTask.isCompilerAvailable()) {
-            missing << 'SPIR-V compiler: libshaderc or glslc (Fedora: libshaderc or glslc)'
-        }
         if (!missing.isEmpty()) {
-            throw new GradleException("Missing build requirements:\n  - " + missing.join('\n  - '))
+            throw new GradleException("Missing requirements of generateBindings:\n  - " + missing.join('\n  - '))
         }
     }
 }
@@ -257,16 +270,18 @@ tasks.register('checkRequirements') {
 // FFM wrappers
 
 tasks.register('generateGtk4Wrappers', com.sun.javafx.gradle.Gtk4WrapperGeneratorTask) {
-    dependsOn 'checkRequirements'
+    dependsOn 'checkBindingsRequirements'
     girFiles = project.files(girPackages.keySet().collect { "${girDir}/${it}" })
     includeClasses = gtk4Classes
     includeNamespaceFunctions = ["Gdk", "Gtk", "Adw", "GLib", "GObject", "Gio"]
-    outputDir = genDir.get().dir('gtk4').asFile
+    outputDir = new File(bindingsDir, 'gtk4')
+    // Only generated sources are there: a type removed from the lists goes away
+    doFirst { project.delete(new File(bindingsDir, 'gtk4')) }
     packageName = 'com.sun.glass.ui.gtk4.wrappers'
 }
 
 tasks.register('generateVulkanBindings', com.sun.javafx.gradle.VulkanBindingsGeneratorTask) {
-    dependsOn 'checkRequirements'
+    dependsOn 'checkBindingsRequirements'
     registry = file(vkRegistry)
     includeCommands = [
         "vkCreateInstance", "vkDestroyInstance", "vkEnumerateInstanceLayerProperties",
@@ -324,7 +339,9 @@ tasks.register('generateVulkanBindings', com.sun.javafx.gradle.VulkanBindingsGen
         "VkDescriptorBufferInfo", "VkDescriptorImageInfo", "VkWriteDescriptorSet",
         "VkImageSubresourceRange",
     ]
-    outputDir = genDir.get().dir('vk').asFile
+    outputDir = new File(bindingsDir, 'vk')
+    // Only generated sources are there: a type removed from the lists goes away
+    doFirst { project.delete(new File(bindingsDir, 'vk')) }
     packageName = 'com.sun.prism.vk.bindings'
 }
 
@@ -465,8 +482,13 @@ tasks.register('generateGLStaticShaders') {
     }
 }
 
-tasks.named('compileJava') {
+tasks.register('generateBindings') {
+    description = 'Regenerates the GTK 4 wrappers (from the GIR files) and the Vulkan bindings (from vk.xml) in src/generated'
     dependsOn 'generateGtk4Wrappers', 'generateVulkanBindings'
+}
+
+tasks.named('compileJava') {
+    dependsOn 'checkRequirements'
     options.compilerArgs += jfxModuleArgs
 }
 
