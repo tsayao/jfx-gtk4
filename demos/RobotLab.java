@@ -216,6 +216,8 @@ public class RobotLab {
     private final Label captureInfo = new Label("No capture yet");
     private final Label pointerPill = new Label("Robot pointer: –");
     private Point2D lastMove;
+    /** Where the last move was, on the pad, which does not change when the robot locates the window. */
+    private Point2D lastMoveOnPad;
     private int clicks;
     private int maxClickCount;
     private boolean contextMenuShown;
@@ -360,6 +362,7 @@ public class RobotLab {
 
     private void pointerAt(MouseEvent e, String how) {
         lastMove = new Point2D(e.getScreenX(), e.getScreenY());
+        lastMoveOnPad = pad.sceneToLocal(e.getSceneX(), e.getSceneY());
         double w = pad.getWidth(), h = pad.getHeight();
         crossH.setStartX(0);
         crossH.setEndX(w);
@@ -403,23 +406,30 @@ public class RobotLab {
     private void defineTests() {
         suite.robot("Pointer move", "Moves to the center of the pad and checks the MOUSE_MOVED position",
                 () -> {
-                    Point2D target = fx(() -> center(pad));
-                    fx(() -> lastMove = null);
-                    fx(() -> robot.mouseMove(target));
-                    await("a MOUSE_MOVED on the pad", () -> lastMove != null && lastMove.distance(target) < 2);
+                    Point2D local = fx(() -> new Point2D(pad.getWidth() / 2, pad.getHeight() / 2));
+                    fx(() -> lastMoveOnPad = null);
+                    fx(() -> robot.mouseMove(pad.localToScreen(local)));
+                    await("a MOUSE_MOVED at the center of the pad",
+                            () -> lastMoveOnPad != null && lastMoveOnPad.distance(local) < 2);
+                    // Off the test session the robot may have located the window on
+                    // the screen first, which moved the pad there
+                    Point2D target = fx(() -> pad.localToScreen(local));
                     Point2D reported = fx(() -> robot.getMousePosition());
                     check(reported.distance(target) < 1, "getMousePosition() is " + fmt(reported));
                     return "event at " + fmt(fx(() -> lastMove)) + ", target " + fmt(target);
                 });
         suite.robot("Mouse location", "Moves to the corners and the center of the pad, where getMousePosition() "
                 + "follows (MouseLocationOnScreenTest)", () -> {
-            Bounds b = fx(() -> screenBounds(pad));
+            Bounds b = fx(() -> pad.getLayoutBounds());
             List<Point2D> points = List.of(new Point2D(b.getMinX() + 5, b.getMinY() + 5),
                     new Point2D(b.getMaxX() - 5, b.getMinY() + 5), new Point2D(b.getMaxX() - 5, b.getMaxY() - 5),
                     new Point2D(b.getMinX() + 5, b.getMaxY() - 5), new Point2D(b.getCenterX(), b.getCenterY()));
-            for (Point2D p : points) {
-                fx(() -> robot.mouseMove(p));
-                await("a MOUSE_MOVED at " + fmt(p), () -> lastMove != null && lastMove.distance(p) < 2);
+            for (Point2D local : points) {
+                fx(() -> lastMoveOnPad = null);
+                fx(() -> robot.mouseMove(pad.localToScreen(local)));
+                await("a MOUSE_MOVED at " + fmt(local) + " on the pad",
+                        () -> lastMoveOnPad != null && lastMoveOnPad.distance(local) < 2);
+                Point2D p = fx(() -> pad.localToScreen(local));
                 Point2D reported = fx(() -> robot.getMousePosition());
                 check(reported.distance(p) < 1, "getMousePosition() is " + fmt(reported) + " at " + fmt(p));
             }

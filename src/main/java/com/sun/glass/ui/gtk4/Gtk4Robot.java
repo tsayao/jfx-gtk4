@@ -181,17 +181,20 @@ final class Gtk4Robot extends GlassRobot {
         Gtk4EiInput in = input();
         double tx = x;
         double ty = y;
-        if (!Gtk4TestSession.isEnabled()) {
-            List<Gtk4Window> hits = Gtk4Window.getToplevelsAt((int) Math.floor(x), (int) Math.floor(y));
-            if (!hits.isEmpty() && !hits.getFirst().isPositionKnown()) {
-                // The point was computed with the assumed position of the window
-                Gtk4Window w = hits.getFirst();
-                int assumedX = w.getScreenX();
-                int assumedY = w.getScreenY();
-                if (locate(in, w)) {
-                    tx = x - assumedX + w.getScreenX();
-                    ty = y - assumedY + w.getScreenY();
-                }
+        List<Gtk4Window> hits = Gtk4Window.getToplevelsAt((int) Math.floor(x), (int) Math.floor(y));
+        if (!hits.isEmpty()) {
+            // The point was computed with the position the window had: one
+            // assumed off the test session, or one the user has since changed
+            // by moving the window in it
+            Gtk4Window w = hits.getFirst();
+            int assumedX = w.getScreenX();
+            int assumedY = w.getScreenY();
+            boolean moved = Gtk4TestSession.isEnabled()
+                    ? w.refreshTestPosition()
+                    : !w.isPositionKnown() && locate(in, w);
+            if (moved) {
+                tx = x - assumedX + w.getScreenX();
+                ty = y - assumedY + w.getScreenY();
             }
         }
         moveTo(in, tx, ty);

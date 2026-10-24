@@ -988,6 +988,25 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         return true;
     }
 
+    /**
+     * Asks the test session where the window is, which the user may have
+     * moved, and reports a change; returns whether the window moved.
+     */
+    boolean refreshTestPosition() {
+        if (destroyed || gtkWindow == null || testTag == null || !gtkWindow.getMapped()) {
+            return false;
+        }
+        int[] frame = Gtk4TestSession.getWindowPosition(testTag);
+        if (frame == null || (frame[0] == frameX && frame[1] == frameY)) {
+            return false;
+        }
+        Gtk4Log.log(SIZING, "test position: frame moved to %d,%d", frame[0], frame[1]);
+        frameX = frame[0];
+        frameY = frame[1];
+        notifyMove(frameX, frameY);
+        return true;
+    }
+
     private void disposeBackgroundEffect() {
         if (backgroundEffect != null) {
             backgroundEffect.dispose();
