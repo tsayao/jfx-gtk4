@@ -277,11 +277,11 @@ Every run can be stopped.
 | Lab             | Tests                                                                    |
 |-----------------|--------------------------------------------------------------------------|
 | Robot           | `javafx.scene.robot.Robot`: pointer, buttons, wheel, keyboard, pixels and screen capture; the mouse location and the wheel scale (MouseLocationOnScreenTest, MouseWheelScaleTest) |
-| Windows         | Every window style, focus, maximized, full screen and minimized states before and after show, modality, min and max sizes, popups |
-| Screens         | Two monitors of different scales: stages, popups and dialogs on the second one, moves between them, maximized and full screen there |
-| Stage           | A stage playground (styles, backdrops, owners, properties), and sizeToScene, new scene sizes, iconify, redraw after deiconify, ownership, modal children, key events that close a stage, nested event loops and showAndWait (SizeToSceneTest, NewSceneSizeTest, IconifyTest, DrawAfterDeiconifyTest, DeiconifiedWithChildTest, StageOwnershipTest, SceneChangeShouldNotFocusStageTest, SetSceneScalingTest, KeyEventClosesStageTest, NestedEventLoopTest, ShowAndWaitTest) |
+| Windows         | Every window style, focus, maximized, full screen and minimized states before and after show, modality, min and max sizes, popups; sizeToScene, new scene sizes, iconify, redraw after deiconify, ownership, modal children, key events that close a stage, nested event loops and showAndWait (SizeToSceneTest, NewSceneSizeTest, IconifyTest, DrawAfterDeiconifyTest, DeiconifiedWithChildTest, StageOwnershipTest, SceneChangeShouldNotFocusStageTest, SetSceneScalingTest, KeyEventClosesStageTest, NestedEventLoopTest, ShowAndWaitTest) |
+| Screens         | Two monitors: stages, popups and dialogs on the second one, moves between them at different scales, maximized and full screen there; a monitor added and removed by hand, from the menu of the Mutter Development Kit |
+| Stage           | No tests: a stage playground (styles, owners, modality, properties, a title of emoji) |
 | Dialogs         | File and folder choosers (through the portal), extension filters, alerts, text input and choice dialogs, dialog sizes (DialogRepeatedShowHideTest, DialogWithOwnerSizingTest, MakeResizableAndResizeTest) |
-| Drag and drop   | Transfer modes and modifiers, data formats, drag images and offsets, drops from and to other applications, full drag |
+| Drag and drop   | Transfer modes and modifiers, data formats (with RTF and serialized objects), drag images and offsets, drops from and to other applications, full drag, colors between shapes, a context menu when a drag ends |
 | Clipboard       | Copy and paste of text, HTML, RTF, URLs, files, images and custom formats, checked by a second process and with `wl-copy` and `wl-paste` |
 | Render          | A showcase of shapes, paints, text, images, effects, blending, canvases, 3D and CSS, and sRGB colors, PixelBuffer updates, LCD text, snapshots (SRGBTest, PixelBufferDrawTest, TransparentLCDTest, Snapshot1Test) |
 | 3D              | 3D rendering checked on the screen and in snapshots, and the frame rate of heavier scenes; skipped on the `sw` pipeline |
@@ -361,7 +361,7 @@ the plugin is built first with `./gradlew jar`.
 | `--apps=a,b,...`             | Demos to run, `eyecandy` or `tests`, or `all` (`eyecandy`)     |
 | `--compositor=none\|gnome\|kde\|hyprland` | Current desktop, or a nested compositor (`none`)        |
 | `--pipeline=auto\|vk\|gl\|sw`  | Prism pipeline: Vulkan, OpenGL 4.5 or software; `auto` tries them in that order (`auto`) |
-| `--backdrop=on\|off`          | Sets `glass.gtk4.backdrop` (`on`)                              |
+| `--backdrop=auto\|on\|off`    | Sets `glass.gtk4.backdrop`; `auto` turns it on for the demos and off for `tests` (`auto`) |
 | `--toolbox=NAME`             | Toolbox container of the compositor (`jfx-gnome51`, `jfx-kde`, `jfx-hyprland`), or `none` for the compositor of the host |
 | `--toolbox-release=N`        | Fedora release of a new toolbox container, a number or `rawhide` (gnome: `45`, kde and hyprland: `rawhide`) |
 | `--wallpaper=FILE`           | gnome: desktop image (the host wallpaper)                      |

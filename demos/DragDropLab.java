@@ -24,6 +24,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Side;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -31,9 +32,11 @@ import javafx.scene.SnapshotParameters;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
 import javafx.scene.effect.Glow;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -65,12 +68,18 @@ import javafx.scene.paint.LinearGradient;
 import javafx.scene.paint.RadialGradient;
 import javafx.scene.paint.Stop;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Rectangle;
+import javafx.scene.shape.Shape;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.ObjectInputFilter;
+import java.io.ObjectInputStream;
+import java.nio.ByteBuffer;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -101,10 +110,17 @@ import java.util.stream.Collectors;
  *     (DndTestDragViewRawImage), with ordinary and extreme offsets (the DnD
  *     page of Monkey Tester);</li>
  * <li>a full press-drag-release gesture, and lists that reorder their items
- *     and move them between each other.</li>
+ *     and move them between each other;</li>
+ * <li>a context menu shown when a drag ends, whose items must take clicks
+ *     once the drag has given back the pointer;</li>
+ * <li>colors dragged as a serialized double[] between swatches and circles
+ *     that are sources and destinations at once, a move leaving the source
+ *     gray (DragDropColor of the DragDrop toy), and RTF and custom bytes
+ *     (DragDropWithControls of the same toy).</li>
  * </ul>
  * Its tests (see TestKit) drag with the robot between the tiles, from the
- * format sources to the drop target, and between the lists.
+ * format sources to the drop target, between the lists and between the
+ * colors.
  */
 public class DragDropLab {
 
@@ -242,6 +258,12 @@ public class DragDropLab {
 
     private static final DataFormat CUSTOM = new DataFormat("application/x-jfx-dragdrop-demo");
     private static final DataFormat LIST_ITEM = new DataFormat("application/x-jfx-dragdrop-demo-item");
+    private static final DataFormat BYTES = new DataFormat("application/x-jfx-dragdrop-demo-bytes");
+    // Color is not Serializable, so the colors travel as red, green, blue and opacity
+    private static final DataFormat COLOR = new DataFormat("application/x-jfx-dragdrop-demo-color");
+    private static final String RTF = "{\\rtf1\\ansi\\uc1{\\colortbl;\\red255\\green0\\blue0;}"
+            + "\\uc1\\b\\i FRED\\par rtf\\par text}";
+    private static final Color EMPTY = Color.web("#475569");
     private static final int LOG_SIZE = 300;
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
     private static final TransferMode[] COPY = {TransferMode.COPY};
@@ -337,6 +359,10 @@ public class DragDropLab {
     private final List<Label> fullTargets = new ArrayList<>();
     private Label fullSource;
     private String fullDragResult;
+    private Node menuSource;
+    private Node menuTarget;
+    private ContextMenu dragEndMenu;
+    private String menuPicked;
     private ListView<String> todoList;
     private ListView<String> doneList;
     private int drops;
@@ -344,14 +370,20 @@ public class DragDropLab {
     private Image droppedImage;
     private String droppedFiles;
     private Object droppedCustom;
+    private String droppedRtf;
+    private byte[] droppedBytes;
+    private final List<Shape> swatches = new ArrayList<>();
+    private final List<Circle> colorCircles = new ArrayList<>();
+    private Label colorText;
+    private TransferMode colorDone;
 
     /**
      * The lab without its header bar, which the tests launcher shows in a tab.
      */
     Region content(Stage stage) {
         backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
-        VBox left = column(modesCard(), fullDragCard(), testsCard(stage));
-        VBox middle = column(formatsCard(), reorderCard());
+        VBox left = column(modesCard(), fullDragCard(), dragEndMenuCard(), testsCard(stage));
+        VBox middle = column(formatsCard(), colorsCard(), reorderCard());
         VBox right = column(dropCard(), logCard());
         HBox columns = new HBox(14);
         for (VBox c : List.of(left, middle, right)) {
@@ -528,6 +560,11 @@ public class DragDropLab {
                 }),
                 chip("Custom", CUSTOM.getIdentifiers().iterator().next(),
                         c -> c.put(CUSTOM, "Custom payload #" + (++counter))),
+                chip("RTF", "text/rtf + text/plain", c -> {
+                    c.putRtf(RTF);
+                    c.putString("FRED rtf text");
+                }),
+                chip("Bytes", "four bytes, serialized", c -> c.put(BYTES, new byte[] {1, 2, 3, 4})),
                 chip("Everything", "all of the above", c -> {
                     c.putString("Everything from JavaFX");
                     c.putHtml("<p>Everything from <b>JavaFX</b></p>");
@@ -763,6 +800,8 @@ public class DragDropLab {
         droppedImage = db.hasImage() ? db.getImage() : null;
         droppedFiles = db.hasFiles() ? verifyFiles(db.getFiles()) : null;
         droppedCustom = db.hasContent(CUSTOM) ? db.getContent(CUSTOM) : null;
+        droppedRtf = db.hasRtf() ? db.getRtf() : null;
+        droppedBytes = deserialize(db.getContent(BYTES), byte[].class);
         received.getChildren().clear();
         Label head = new Label("Received " + mode + " from " + source + " at " + now());
         head.setStyle("-fx-font-weight: bold;");
@@ -793,6 +832,12 @@ public class DragDropLab {
         }
         if (db.hasContent(CUSTOM)) {
             received.getChildren().add(entry("Custom", String.valueOf(db.getContent(CUSTOM))));
+        }
+        if (db.hasRtf()) {
+            received.getChildren().add(entry("RTF", db.getRtf()));
+        }
+        if (droppedBytes != null) {
+            received.getChildren().add(entry("Bytes", Arrays.toString(droppedBytes)));
         }
         if (db.hasImage()) {
             Image image = db.getImage();
@@ -838,6 +883,32 @@ public class DragDropLab {
             }
         }
         return checked == 0 ? null : "SUCCESS: " + checked + " of " + files.size() + " files verified";
+    }
+
+    /**
+     * Dropped content of a serializable type. JavaFX deserializes only strings,
+     * unless -Djavafx.dnd.deserializeObjectGraph=true, and otherwise hands over
+     * the serialized bytes, which are read here allowing just that type.
+     */
+    private static <T> T deserialize(Object content, Class<T> type) {
+        if (type.isInstance(content)) {
+            return type.cast(content);
+        }
+        if (!(content instanceof ByteBuffer buffer)) {
+            return null;
+        }
+        ByteBuffer copy = buffer.duplicate().rewind();
+        byte[] bytes = new byte[copy.remaining()];
+        copy.get(bytes);
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes))) {
+            in.setObjectInputFilter(info -> info.serialClass() == null ? ObjectInputFilter.Status.UNDECIDED
+                    : info.serialClass() == type ? ObjectInputFilter.Status.ALLOWED
+                    : ObjectInputFilter.Status.REJECTED);
+            Object value = in.readObject();
+            return type.isInstance(value) ? type.cast(value) : null;
+        } catch (IOException | ClassNotFoundException e) {
+            return null;
+        }
     }
 
     private static Node entry(String key, String value) {
@@ -903,6 +974,152 @@ public class DragDropLab {
         Label hint = muted("A full press-drag-release gesture stays inside JavaFX: the targets get "
                 + "MOUSE_DRAG events and no platform drag starts.");
         return card("Full drag", row, hint);
+    }
+
+    // ---------------------------------------------------------------------
+    // Colors, after DragDropColor of the DragDrop toy
+
+    private Node colorsCard() {
+        HBox sources = new HBox(8);
+        for (Color c : List.of(Color.web("#ef4444"), Color.web("#22c55e"), Color.web("#3b82f6"))) {
+            Rectangle swatch = new Rectangle(34, 34, c);
+            swatch.setArcWidth(10);
+            swatch.setArcHeight(10);
+            colorSource(swatch, TransferMode.COPY);
+            swatches.add(swatch);
+            sources.getChildren().add(swatch);
+        }
+        HBox circles = new HBox(12);
+        for (int i = 0; i < 2; i++) {
+            Circle circle = new Circle(30, EMPTY);
+            circle.setStroke(Color.rgb(255, 255, 255, 0.3));
+            colorSource(circle, TransferMode.COPY_OR_MOVE);
+            colorTarget(circle);
+            colorCircles.add(circle);
+            circles.getChildren().add(circle);
+        }
+        colorText = new Label("Text drop target");
+        colorText.getStyleClass().add("full-target");
+        colorText.setOnDragOver(e -> {
+            if (e.getDragboard().hasString()) {
+                e.acceptTransferModes(TransferMode.COPY_OR_MOVE);
+            }
+            e.consume();
+        });
+        colorText.setOnDragDropped(e -> {
+            colorText.setText(e.getDragboard().getString());
+            e.setDropCompleted(e.getDragboard().hasString());
+            e.consume();
+        });
+        HBox row = new HBox(16, sources, circles, colorText);
+        row.setAlignment(Pos.CENTER_LEFT);
+        Button clear = new Button("Clear");
+        clear.setOnAction(e -> {
+            colorCircles.forEach(c -> c.setFill(EMPTY));
+            colorText.setText("Text drop target");
+        });
+        Label hint = muted("The swatches copy their color; the circles copy or move it (Shift), and a moved "
+                + "color leaves its circle gray. The color travels as a serialized double[], and as text "
+                + "for the text target and other applications.");
+        return card("Colors", row, hint, clear);
+    }
+
+    private void colorSource(Shape shape, TransferMode... modes) {
+        shape.setOnDragDetected(e -> {
+            if (!(shape.getFill() instanceof Color c) || c.equals(EMPTY)) {
+                return;
+            }
+            Dragboard db = shape.startDragAndDrop(modes);
+            ClipboardContent content = new ClipboardContent();
+            content.putString(c.toString());
+            content.put(COLOR, new double[] {c.getRed(), c.getGreen(), c.getBlue(), c.getOpacity()});
+            db.setContent(content);
+            log("DRAG_DETECTED color " + c);
+            e.consume();
+        });
+        shape.setOnDragDone(e -> {
+            colorDone = e.getTransferMode();
+            if (e.getTransferMode() == TransferMode.MOVE) {
+                shape.setFill(EMPTY);
+            }
+            log("DRAG_DONE color: " + (e.getTransferMode() == null ? "not accepted" : e.getTransferMode()));
+            e.consume();
+        });
+        logMouseEvents(shape, "color");
+    }
+
+    private void colorTarget(Circle circle) {
+        circle.setOnDragOver(e -> {
+            if (e.getGestureSource() != circle && e.getDragboard().hasContent(COLOR)) {
+                e.acceptTransferModes(TransferMode.COPY_OR_MOVE);
+            }
+            e.consume();
+        });
+        circle.setOnDragDropped(e -> {
+            boolean ok = false;
+            double[] a = deserialize(e.getDragboard().getContent(COLOR), double[].class);
+            if (a != null && a.length == 4) {
+                circle.setFill(new Color(a[0], a[1], a[2], a[3]));
+                ok = true;
+            }
+            e.setDropCompleted(ok);
+            e.consume();
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // A context menu when a drag ends
+
+    private Node dragEndMenuCard() {
+        Label result = styled("", "line");
+        dragEndMenu = new ContextMenu();
+        for (String name : List.of("Copy here", "Move here", "Cancel")) {
+            MenuItem item = new MenuItem(name);
+            item.setId(name.replace(" ", "-").toLowerCase(Locale.ROOT));
+            item.setOnAction(e -> {
+                menuPicked = name;
+                result.setText("Picked \"" + name + "\"");
+                log("Menu item \"" + name + "\" after the drag");
+            });
+            dragEndMenu.getItems().add(item);
+        }
+        VBox source = new VBox(styled("Drag me", "title"), result);
+        source.getStyleClass().addAll("tile", "source");
+        menuSource = source;
+        Label target = new Label("Drop here");
+        target.getStyleClass().addAll("tile", "target");
+        menuTarget = target;
+        source.setOnDragDetected(e -> {
+            Dragboard db = source.startDragAndDrop(TransferMode.COPY);
+            ClipboardContent content = new ClipboardContent();
+            content.putString("A menu opens when this drag ends");
+            db.setContent(content);
+            result.setText("Dragging");
+            e.consume();
+        });
+        target.setOnDragOver(e -> {
+            if (e.getGestureSource() == source) {
+                e.acceptTransferModes(TransferMode.COPY);
+            }
+            e.consume();
+        });
+        target.setOnDragDropped(e -> {
+            e.setDropCompleted(true);
+            e.consume();
+        });
+        // Shown from DRAG_DONE, while the platform may still be ending the drag
+        source.setOnDragDone(e -> {
+            result.setText("Done, " + (e.isAccepted() ? "accepted" : "rejected") + ": pick an item");
+            log("DRAG_DONE menu source: showing the context menu");
+            dragEndMenu.show(target, Side.BOTTOM, 0, 4);
+            e.consume();
+        });
+        HBox row = new HBox(12, source, target);
+        row.setAlignment(Pos.CENTER_LEFT);
+        Label hint = muted("When the drag ends, the source shows a context menu under the destination. Its "
+                + "items must highlight under the pointer and take clicks, as the drag no longer holds the "
+                + "pointer.");
+        return card("Menu after a drag", row, hint);
     }
 
     // ---------------------------------------------------------------------
@@ -1085,6 +1302,48 @@ public class DragDropLab {
             check(want.equals(value), "the custom content is " + value + ", expected " + want);
             return String.valueOf(value);
         });
+        suite.robot("RTF", "Drops the RTF source, text/rtf, on the drop target", () -> {
+            dropChip("RTF");
+            String rtf = fx(() -> droppedRtf);
+            check(RTF.equals(rtf), "the dropped RTF is " + rtf);
+            return rtf.length() + " characters of RTF";
+        });
+        suite.robot("Custom bytes", "Drops the Bytes source, a byte[] serialized by JavaFX", () -> {
+            dropChip("Bytes");
+            byte[] bytes = fx(() -> droppedBytes);
+            check(Arrays.equals(bytes, new byte[] {1, 2, 3, 4}), "the dropped bytes are " + Arrays.toString(bytes));
+            return Arrays.toString(bytes);
+        });
+        suite.robot("Color copy", "Drags the red swatch to the first circle, a serialized double[] (DragDropColor)",
+                () -> {
+            fx(() -> colorCircles.forEach(c -> c.setFill(EMPTY)));
+            Color red = fx(() -> (Color) swatches.getFirst().getFill());
+            dragColor(swatches.getFirst(), colorCircles.getFirst());
+            check(fx(() -> red.equals(colorCircles.getFirst().getFill())), "the circle is "
+                    + fx(() -> colorCircles.getFirst().getFill()));
+            check(fx(() -> colorDone) == TransferMode.COPY, "the drag ended with " + fx(() -> colorDone));
+            return "the circle is " + red;
+        });
+        suite.robot("Color move", "Drags the first circle to the second holding Shift: the color moves and the "
+                + "first turns gray (DragDropColor)", () -> {
+            Color green = fx(() -> (Color) swatches.get(1).getFill());
+            fx(() -> {
+                colorCircles.getFirst().setFill(green);
+                colorCircles.get(1).setFill(EMPTY);
+            });
+            dragColor(colorCircles.getFirst(), colorCircles.get(1), KeyCode.SHIFT);
+            await("the first circle gray", () -> EMPTY.equals(colorCircles.getFirst().getFill()));
+            check(fx(() -> green.equals(colorCircles.get(1).getFill())), "the second circle is "
+                    + fx(() -> colorCircles.get(1).getFill()));
+            return "moved " + green;
+        });
+        suite.robot("Color as text", "Drags the blue swatch to the text target, which takes the string",
+                () -> {
+            Color blue = fx(() -> (Color) swatches.get(2).getFill());
+            dragColor(swatches.get(2), colorText);
+            await("the text", () -> colorText.getText().equals(blue.toString()));
+            return "\"" + blue + "\"";
+        });
         suite.robot("Rejected by the target", "Drops Text on the target that rejects everything", () -> {
             fx(() -> acceptBox.setValue(Accept.NONE));
             int before = fx(() -> drops);
@@ -1115,6 +1374,25 @@ public class DragDropLab {
             String result = fx(() -> fullDragResult);
             check(result.equals("Two from the source"), "released on " + result);
             return "released on " + result;
+        });
+        suite.robot("Menu after a drag", "Drops on the destination, the source shows a context menu on DRAG_DONE, "
+                + "and a click picks its second item", () -> {
+            fx(() -> {
+                menuPicked = null;
+                dragEndMenu.hide();
+            });
+            try {
+                TestKit.drag(menuSource, menuTarget);
+                await("the context menu", 5000, () -> dragEndMenu.isShowing());
+                TestKit.click(awaitMenuItem(dragEndMenu, "#move-here"));
+                await("the item action", () -> menuPicked != null);
+                check("Move here".equals(fx(() -> menuPicked)), "picked " + fx(() -> menuPicked));
+                await("the menu hidden", () -> !dragEndMenu.isShowing());
+            } catch (AssertionError e) {
+                fx(() -> dragEndMenu.hide());
+                throw e;
+            }
+            return "picked \"" + fx(() -> menuPicked) + "\"";
         });
         suite.robot("Move between lists", "Drags the first item of To do below the items of Done", () -> {
             String item = fx(() -> todoList.getItems().getFirst());
@@ -1170,6 +1448,36 @@ public class DragDropLab {
         await("the drop of " + title, 5000, () -> drops > before && chipDone.containsKey(title));
         String done = fx(() -> chipDone.get(title));
         check(!"not accepted".equals(done), "the drag of " + title + " was not accepted");
+    }
+
+    /**
+     * Waits for a laid out node of a showing context menu.
+     */
+    private static Node awaitMenuItem(ContextMenu menu, String selector) {
+        Node[] found = {null};
+        await("the node " + selector, () -> {
+            Node n = menu.getScene() == null ? null : menu.getScene().getRoot().lookup(selector);
+            found[0] = n != null && n.localToScreen(n.getLayoutBounds()) != null ? n : null;
+            return found[0] != null;
+        });
+        TestKit.pause(150);
+        return found[0];
+    }
+
+    /**
+     * Drags a color source to a destination and waits for the end of the drag.
+     */
+    private void dragColor(Node from, Node to, KeyCode... modifiers) {
+        fx(() -> colorDone = null);
+        boolean[] done = {false};
+        javafx.event.EventHandler<DragEvent> handler = e -> done[0] = true;
+        fx(() -> from.addEventHandler(DragEvent.DRAG_DONE, handler));
+        try {
+            TestKit.drag(from, to, modifiers);
+            await("the end of the drag", 5000, () -> done[0]);
+        } finally {
+            fx(() -> from.removeEventHandler(DragEvent.DRAG_DONE, handler));
+        }
     }
 
     private static boolean closeArgb(int a, int b) {

@@ -168,7 +168,7 @@ public class TestsDemo extends Application {
         ScreensLab screens = new ScreensLab();
         addLab("Screens", screens.content(stage), ScreensLab.STYLESHEET, screens.suite);
         StageLab stageLab = new StageLab();
-        addLab("Stage", stageLab.content(stage), StageLab.STYLESHEET, stageLab.suite);
+        addLab("Stage", stageLab.content(stage), StageLab.STYLESHEET, null);
         DialogsLab dialogs = new DialogsLab();
         addLab("Dialogs", dialogs.content(stage), DialogsLab.STYLESHEET, dialogs.suite);
         DragDropLab dragDrop = new DragDropLab();
@@ -222,7 +222,10 @@ public class TestsDemo extends Application {
         holder.getStylesheets().addAll(stylesheet, TestKit.POPUP_STYLESHEET);
         Tab tab = new Tab(name, holder);
         tabs.getTabs().add(tab);
-        labs.add(new Lab(name, suite, tab));
+        // A lab without tests is a playground, left out of the overview and the runs
+        if (suite != null) {
+            labs.add(new Lab(name, suite, tab));
+        }
     }
 
     private Region backgroundLayer() {

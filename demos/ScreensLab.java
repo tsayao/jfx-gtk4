@@ -57,7 +57,9 @@ import java.util.Locale;
  * positions, which the nested GNOME Shell of the launcher gives the tests:
  * <pre>./launcher.sh --apps=tests --compositor=gnome --headless -- -Dtests.labs=screens</pre>
  * (a second monitor of 1280 × 800 at a scale near 2, see --monitors).
- * Elsewhere they are skipped.
+ * Elsewhere they are skipped. With the Mutter Development Kit (the nested
+ * shell with a window), a monitor added from its menu serves as the second
+ * one, and the manual hotplug tests pass when a monitor is added and removed.
  */
 public class ScreensLab {
 
@@ -66,6 +68,15 @@ public class ScreensLab {
     private static final double BOUNDS_TOLERANCE = 2;
 
     final TestKit.Suite suite = new TestKit.Suite("Screens");
+    private static final String ADD_MONITOR = "With the Mutter Development Kit (./launcher.sh --apps=tests "
+            + "--compositor=gnome), use its menu to add a monitor";
+    private final TestKit.Test screenAdded = suite.manual("Screen added", ADD_MONITOR
+            + ": the new screen shows up in Screen.getScreens() with its size");
+    private final TestKit.Test screenRemoved = suite.manual("Screen removed", "Remove the added monitor with the "
+            + "menu of the Mutter Development Kit: its screen leaves Screen.getScreens()");
+    // The screens before the last change, all with a size
+    private List<Screen> lastScreens;
+    private boolean sizeCheckPending;
     private final Pane map = new Pane();
     private final VBox details = new VBox(4);
     private final List<Stage> testStages = new ArrayList<>();
@@ -88,10 +99,12 @@ public class ScreensLab {
         map.widthProperty().addListener(o -> drawMap());
         map.heightProperty().addListener(o -> drawMap());
         Screen.getScreens().addListener((ListChangeListener<Screen>) c -> drawMap());
+        lastScreens = List.copyOf(Screen.getScreens());
+        Screen.getScreens().addListener((ListChangeListener<Screen>) c -> screensChanged());
         VBox.setVgrow(map, Priority.ALWAYS);
         Label hint = new Label("The tests place stages on the screens, which needs the nested GNOME Shell of the "
-                + "launcher with two monitors of different scales: ./launcher.sh --apps=tests --compositor=gnome "
-                + "--headless gives it to the tests.");
+                + "launcher with two monitors: ./launcher.sh --apps=tests --compositor=gnome --headless gives the "
+                + "tests two of different scales. " + ADD_MONITOR + ".");
         hint.getStyleClass().add("muted");
         hint.setWrapText(true);
         VBox left = column(TestKit.grow(card("Screens", map, details, hint)));
@@ -174,7 +187,7 @@ public class ScreensLab {
     // Tests
 
     private void defineTests() {
-        suite.auto("Two screens", "Two screens side by side, of different output scales, the first one primary",
+        suite.auto("Two screens", "Two screens side by side, the first one primary",
                 () -> {
                     List<Screen> screens = requireScreens();
                     Screen a = screens.get(0), b = screens.get(1);
@@ -209,7 +222,7 @@ public class ScreensLab {
         });
         suite.auto("Moving between screens", "A stage moved to the other screen and back changes its scale each time",
                 () -> {
-                    List<Screen> screens = requireScreens();
+                    List<Screen> screens = requireScreens(true);
                     Screen a = screens.get(0), b = screens.get(1);
                     Stage s = testStage("Moving", a);
                     awaitScale(s, a);
@@ -304,19 +317,55 @@ public class ScreensLab {
     }
 
     /**
+     * Passes the manual hotplug tests. A monitor may come before its geometry:
+     * a new screen without a size must get one soon.
+     */
+    private void screensChanged() {
+        List<Screen> now = List.copyOf(Screen.getScreens());
+        boolean sized = now.stream().allMatch(s -> s.getBounds().getWidth() > 0 && s.getBounds().getHeight() > 0);
+        if (now.size() > lastScreens.size() && !sized) {
+            if (!sizeCheckPending) {
+                sizeCheckPending = true;
+                javafx.animation.PauseTransition wait = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(3));
+                wait.setOnFinished(e -> {
+                    sizeCheckPending = false;
+                    if (Screen.getScreens().stream().anyMatch(s -> s.getBounds().getWidth() <= 0)) {
+                        screenAdded.fail("A new screen has no size after 3 s: " + Screen.getScreens().stream()
+                                .map(ScreensLab::size).toList());
+                    }
+                });
+                wait.play();
+            }
+            return;
+        }
+        if (now.size() > lastScreens.size()) {
+            Screen added = now.stream().filter(s -> !lastScreens.contains(s)).findFirst().orElse(now.getLast());
+            screenAdded.pass(String.format(Locale.ROOT, "Added %s at × %.2f, %d screens", size(added),
+                    added.getOutputScaleX(), now.size()));
+        } else if (now.size() < lastScreens.size()) {
+            screenRemoved.pass("Removed, " + now.size() + (now.size() == 1 ? " screen" : " screens") + " left");
+        }
+        lastScreens = now;
+    }
+
+    /**
      * The screens, when the tests can place stages on two of different scales.
      */
     private static List<Screen> requireScreens() {
+        return requireScreens(false);
+    }
+
+    private static List<Screen> requireScreens(boolean differentScales) {
         if (!"gnome".equals(System.getProperty("glass.gtk4.testSession"))) {
             TestKit.skip("Needs the nested GNOME Shell of the launcher, which places the windows: "
                     + "./launcher.sh --apps=tests --compositor=gnome");
         }
         List<Screen> screens = TestKit.fx(() -> List.copyOf(Screen.getScreens()));
         if (screens.size() < 2) {
-            TestKit.skip("Needs two monitors, not " + screens.size() + ": run the launcher with --headless, or "
-                    + "with --monitors=1600x960@1,1280x800@2");
+            TestKit.skip("Needs two monitors, not " + screens.size() + ": " + ADD_MONITOR + ", or run the "
+                    + "launcher with --headless or --monitors=1600x960@1,1280x800@2");
         }
-        if (near(screens.get(0).getOutputScaleX(), screens.get(1).getOutputScaleX())) {
+        if (differentScales && near(screens.get(0).getOutputScaleX(), screens.get(1).getOutputScaleX())) {
             TestKit.skip("Needs monitors of different scales, not both at " + screens.get(0).getOutputScaleX());
         }
         return screens;

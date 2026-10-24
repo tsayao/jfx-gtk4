@@ -56,7 +56,8 @@
 #   --pipeline=auto|vk|gl|sw
 #                           Prism pipeline: Vulkan, OpenGL 4.5 or software;
 #                           auto tries them in that order (auto)
-#   --backdrop=on|off       blur the area behind the windows (on)
+#   --backdrop=auto|on|off  blur the area behind the windows; auto blurs it
+#                           for the demos and not for the tests (auto)
 #   --toolbox=NAME          toolbox container of the nested compositor
 #                           (jfx-gnome51, jfx-kde, jfx-hyprland), or "none" to use the
 #                           compositor of the host
@@ -107,14 +108,15 @@ DEMOS=$ROOT/demos
 APPS=eyecandy
 COMPOSITOR=none
 PIPELINE=auto
-BACKDROP=on
+BACKDROP=auto
 TOOLBOX=
 TOOLBOX_RELEASE=
 # A COPR repository enabled in the container before installing
 TOOLBOX_COPR=
 # What the demos and the tests need, besides the compositor
 TOOLBOX_PACKAGES="dbus-daemon java-25-openjdk-devel gtk4 libadwaita vulkan-loader mesa-vulkan-drivers \
-mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts wl-clipboard python3-gobject at-spi2-core"
+mesa-libgbm dejavu-sans-fonts google-noto-sans-fonts google-noto-color-emoji-fonts wl-clipboard python3-gobject \
+at-spi2-core"
 WALLPAPER=
 SIZE=2400x1440
 SCALE=1
@@ -179,9 +181,8 @@ case "$PIPELINE" in
     *) echo "Unknown pipeline: $PIPELINE (auto, vk, gl or sw)" >&2; exit 2 ;;
 esac
 case "$BACKDROP" in
-    on) BACKDROP_OPTION=-Dglass.gtk4.backdrop=true ;;
-    off) BACKDROP_OPTION=-Dglass.gtk4.backdrop=false ;;
-    *) echo "Unknown backdrop: $BACKDROP (on or off)" >&2; exit 2 ;;
+    auto|on|off) ;;
+    *) echo "Unknown backdrop: $BACKDROP (auto, on or off)" >&2; exit 2 ;;
 esac
 # The games need FXGL, which ./gradlew fxgl downloads
 FXGL_CLASSPATH=$ROOT/build/fxgl.classpath
@@ -667,6 +668,10 @@ start_$COMPOSITOR
 
 for class in $CLASSES; do
     name=$(printf '%s' "${class%Demo}" | tr '[:upper:]' '[:lower:]')
+    # The tests run without the backdrop unless it is asked for
+    backdrop=$BACKDROP
+    [ "$backdrop" = auto ] && { [ "$class" = TestsDemo ] && backdrop=off || backdrop=on; }
+    [ "$backdrop" = on ] && BACKDROP_OPTION=-Dglass.gtk4.backdrop=true || BACKDROP_OPTION=-Dglass.gtk4.backdrop=false
     # The robot generates input through the remote desktop session of GNOME
     TEST_SESSION=
     case "$class" in

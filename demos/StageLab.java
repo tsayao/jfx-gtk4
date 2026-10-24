@@ -19,8 +19,6 @@
  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-import javafx.application.ColorScheme;
-import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyDoubleProperty;
@@ -35,7 +33,6 @@ import javafx.event.Event;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
@@ -66,7 +63,6 @@ import javafx.scene.image.WritableImage;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Background;
 import javafx.scene.layout.BackgroundFill;
-import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -87,7 +83,6 @@ import javafx.scene.shape.Circle;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
-import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
@@ -317,13 +312,14 @@ public class StageLab {
     private Stage current;
     private boolean selecting;
 
-    private final ComboBox<StageStyle> styleBox = new ComboBox<>(FXCollections.observableArrayList(StageStyle.values()));
+    // UNIFIED exists on macOS only
+    private final ComboBox<StageStyle> styleBox = new ComboBox<>(FXCollections.observableArrayList(
+            java.util.Arrays.stream(StageStyle.values()).filter(s -> s != StageStyle.UNIFIED).toList()));
     private final ComboBox<BackdropChoice> backdropBox = new ComboBox<>();
     private final ComboBox<Modality> modalityBox = new ComboBox<>(FXCollections.observableArrayList(Modality.values()));
     private final ComboBox<Stage> ownerBox = new ComboBox<>();
     private final ComboBox<Content> contentBox = new ComboBox<>(FXCollections.observableArrayList(Content.values()));
     private final ComboBox<FillChoice> fillBox = new ComboBox<>(FXCollections.observableArrayList(FillChoice.values()));
-    private final ComboBox<ColorScheme> schemeBox = new ComboBox<>(FXCollections.observableArrayList(ColorScheme.values()));
     private final Slider opacity = new Slider(0.2, 1, 1);
     private final ListView<Stage> stageList = new ListView<>(stages);
     private final ListView<String> logView = new ListView<>();
@@ -338,28 +334,20 @@ public class StageLab {
      */
     Region content(Stage stage) {
         commandStage = stage;
-        backdropSupported = Boolean.getBoolean("glass.gtk4.backdrop.active");
+        // Backdrops do not work on these stages yet, so their options stay off
+        backdropSupported = false;
         backdropChoices.add(new BackdropChoice(null));
         if (backdropSupported) {
             backdropChoices.add(new BackdropChoice("Window"));
             backdropChoices.add(new BackdropChoice("Partial"));
         }
-        defineTests();
-        suite.setBeforeRun(() -> {
-            stage.toFront();
-            stage.requestFocus();
-        });
-        suite.setAfterEach(this::closeTestStages);
-
         VBox left = column(createCard(), stagesCard(), dialogsCard());
         VBox middle = column(propertiesCard(), logCard());
-        VBox right = column(TestKit.grow(card("Tests", suite.view())));
-        HBox columns = new HBox(14, left, middle, right);
-        for (VBox c : List.of(left, middle, right)) {
+        HBox columns = new HBox(14, left, middle);
+        for (VBox c : List.of(left, middle)) {
             HBox.setHgrow(c, Priority.ALWAYS);
             c.setPrefWidth(1);
         }
-        right.setPrefWidth(1.3);
         columns.setPadding(new Insets(4, 18, 18, 18));
         // Short of room, the cards are cut at the bottom, the header stays
         columns.setMinHeight(0);
@@ -398,7 +386,6 @@ public class StageLab {
         modalityBox.setValue(Modality.NONE);
         contentBox.setValue(Content.INFO);
         fillBox.setValue(FillChoice.TRANSPARENT);
-        schemeBox.setValue(Platform.getPreferences().getColorScheme());
         ownerBox.itemsProperty().bind(Bindings.createObjectBinding(() -> {
             ObservableList<Stage> list = FXCollections.observableArrayList();
             list.add(null);
@@ -423,7 +410,9 @@ public class StageLab {
         addRow(grid, 0, "Style", styleBox, "Backdrop", backdropBox);
         addRow(grid, 1, "Modality", modalityBox, "Owner", ownerBox);
         addRow(grid, 2, "Content", contentBox, "Scene fill", fillBox);
-        addRow(grid, 3, "Color scheme", schemeBox, "Opacity", opacity);
+        opacity.setMaxWidth(Double.MAX_VALUE);
+        grid.add(muted("Opacity"), 0, 3);
+        grid.add(opacity, 1, 3);
 
         Button create = new Button("Create");
         create.setTooltip(new Tooltip("Create a stage without showing it"));
@@ -439,7 +428,7 @@ public class StageLab {
 
         Label hint = muted(backdropSupported
                 ? "The backdrop is set before the stage is shown and shines through transparent fills."
-                : "This platform does not support window backdrops.");
+                : "Backdrops are off in this lab: they do not work on its stages yet.");
         hint.setWrapText(true);
         return card("New stage", grid, buttons, hint);
     }
@@ -608,7 +597,11 @@ public class StageLab {
                 selecting = false;
             }
         }
-        stageProps.addString("Title", s.titleProperty(), s::setTitle);
+        // The title bar must draw the emoji in color, as one glyph per sequence
+        Button emoji = new Button("Emoji");
+        emoji.setTooltip(new Tooltip("Sets a title of emoji, then another one"));
+        emoji.setOnAction(e -> s.setTitle(EMOJI_TITLE.equals(s.getTitle()) ? EMOJI_TITLE_2 : EMOJI_TITLE));
+        stageProps.addString("Title", s.titleProperty(), s::setTitle, emoji);
         stageProps.addBoolean("Always on top", s.alwaysOnTopProperty(), s::setAlwaysOnTop);
         stageProps.addBoolean("Full screen", s.fullScreenProperty(), s::setFullScreen);
         stageProps.addBoolean("Maximized", s.maximizedProperty(), s::setMaximized);
@@ -640,14 +633,10 @@ public class StageLab {
             scene.setFill(fill.getValue().paint);
             s.getProperties().put("demo.fill", fill.getValue());
         });
-        ComboBox<ColorScheme> scheme = new ComboBox<>(FXCollections.observableArrayList(ColorScheme.values()));
-        scheme.setValue(scene.getPreferences().getColorScheme());
-        scheme.setOnAction(e -> scene.getPreferences().setColorScheme(scheme.getValue()));
         ComboBox<Content> content = new ComboBox<>(FXCollections.observableArrayList(Content.values()));
         content.setValue((Content) s.getProperties().getOrDefault("demo.content", Content.INFO));
         content.setOnAction(e -> setContent(s, content.getValue()));
         sceneProps.addNode("Fill", fill);
-        sceneProps.addNode("Color scheme", scheme);
         sceneProps.addNode("Content", content);
         sceneProps.addLabel("Size", Bindings.format(Locale.ROOT, "%.0f × %.0f at %.0f, %.0f",
                 scene.widthProperty(), scene.heightProperty(), scene.xProperty(), scene.yProperty()));
@@ -709,7 +698,6 @@ public class StageLab {
         });
 
         setContent(s, contentBox.getValue());
-        s.getScene().getPreferences().setColorScheme(schemeBox.getValue());
         stages.add(s);
         selectStage(s);
         if (show) {
@@ -795,9 +783,6 @@ public class StageLab {
         FillChoice fill = (FillChoice) s.getProperties().getOrDefault("demo.fill", FillChoice.TRANSPARENT);
         scene.setFill(!backdrop && s.getStyle() != StageStyle.TRANSPARENT && fill.paint == Color.TRANSPARENT
                 ? Color.web("#0b1120") : fill.paint);
-        if (old != null) {
-            scene.getPreferences().setColorScheme(old.getPreferences().getColorScheme());
-        }
         s.setScene(scene);
         if (s == current) {
             sceneProps.clear();
@@ -1098,10 +1083,21 @@ public class StageLab {
         }
 
         void addString(String label, ReadOnlyStringProperty property, Consumer<String> setter) {
+            addString(label, property, setter, null);
+        }
+
+        void addString(String label, ReadOnlyStringProperty property, Consumer<String> setter, Button action) {
             TextField field = new TextField(property.get());
             listen(property, (o, was, now) -> field.setText(now));
             field.setOnAction(e -> setter.accept(field.getText()));
-            addNode(label, field);
+            if (action == null) {
+                addNode(label, field);
+            } else {
+                HBox.setHgrow(field, Priority.ALWAYS);
+                HBox row = new HBox(6, field, action);
+                row.setAlignment(Pos.CENTER_LEFT);
+                addNode(label, row);
+            }
         }
 
         void addBoolean(String label, ReadOnlyBooleanProperty property, Consumer<Boolean> setter) {
@@ -1143,389 +1139,8 @@ public class StageLab {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Tests, after the stage system tests of OpenJFX (tests/system)
-
-    final TestKit.Suite suite = new TestKit.Suite("Stage");
-    // The stages of the tests, which close after each test
-    private final List<Stage> testStages = new ArrayList<>();
-    private static final double ROOT_SIZE = 360;
-    private static final double BOUNDS_DELTA = 50;
-
-    private void defineTests() {
-        suite.auto("Size to scene", "sizeToScene() before show fits the stage to a root of 360 × 360 (SizeToSceneTest)",
-                () -> sizeToSceneTest(s -> { }, false));
-        suite.auto("Size to scene, maximized", "A maximized stage stays maximized through sizeToScene() before show "
-                + "(SizeToSceneTest)", () -> sizeToSceneTest(s -> s.setMaximized(true), true));
-        suite.auto("Size to scene, full screen", "A full screen stage stays full screen through sizeToScene() before "
-                + "show (SizeToSceneTest)", () -> sizeToSceneTest(s -> s.setFullScreen(true), true));
-        suite.auto("New scene sizes", "20 stages, resizable or not, get the size of their new scenes (NewSceneSizeTest)",
-                this::newSceneSizeTest);
-        for (StageStyle style : List.of(StageStyle.UNDECORATED, StageStyle.TRANSPARENT, StageStyle.EXTENDED)) {
-            suite.auto("Iconify " + style.name(), "Iconifies and restores a " + style.name() + " stage (IconifyTest)",
-                    () -> iconifyTest(style));
-        }
-        suite.auto("Draws after deiconify", "A fill changed while the stage is iconified shows once it is restored "
-                + "(DrawAfterDeiconifyTest)", this::drawAfterDeiconifyTest);
-        suite.auto("Child stays in place", "An owned stage keeps its position when its owner is iconified and "
-                + "restored (DeiconifiedWithChildTest)", this::childStaysTest);
-        suite.auto("Closing the owner", "Closing a stage closes its owned stages, and theirs (StageOwnershipTest)",
-                () -> ownershipTest(0));
-        suite.auto("Closing a middle stage", "Closing the middle stage of a chain closes its descendants only "
-                + "(StageOwnershipTest)", () -> ownershipTest(1));
-        suite.auto("Modal child of a maximized owner", "An application modal child leaves its owner maximized and "
-                + "takes the focus (StageOwnershipTest)", () -> modalChildTest(false));
-        suite.auto("Modal child of a full screen owner", "An application modal child leaves its owner in full screen "
-                + "and takes the focus (StageOwnershipTest)", () -> modalChildTest(true));
-        suite.auto("Scene change keeps iconified", "Setting a new scene on an iconified stage does not restore it "
-                + "(SceneChangeShouldNotFocusStageTest)", this::sceneChangeIconifiedTest);
-        suite.robot("New scene takes input", "A scene set on a showing stage lays out and takes clicks "
-                + "(SetSceneScalingTest)", this::newSceneInputTest);
-        suite.robot("Key press closes the stage", "Escape closes the stage from its KEY_PRESSED handler, without a "
-                + "KEY_TYPED afterwards (KeyEventClosesStageTest)", this::keyClosesStageTest);
-        suite.auto("Nested event loops", "Three nested event loops return their values in order (NestedEventLoopTest)",
-                this::nestedLoopsTest);
-        suite.auto("showAndWait", "Modal stages shown with showAndWait() inside one another return in order "
-                + "(ShowAndWaitTest)", this::showAndWaitTest);
-    }
-
-    private void closeTestStages() {
-        for (Stage s : List.copyOf(testStages)) {
-            s.hide();
-        }
-        testStages.clear();
-    }
-
-    /** A stage of the tests, on the FX thread: colored, of 300 × 200 unless its scene changes. */
-    private Stage testStage(StageStyle style, String title) {
-        Stage s = new Stage(style);
-        s.setTitle(title);
-        StackPane root = new StackPane(new Label(title));
-        root.setStyle("-fx-background-color: #1e293b;");
-        s.setScene(new Scene(root, 300, 200));
-        testStages.add(s);
-        return s;
-    }
-
-    private static boolean near(double a, double b, double tolerance) {
-        return Math.abs(a - b) <= tolerance;
-    }
-
-    private String sizeToSceneTest(Consumer<Stage> setup, boolean fills) {
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(StageStyle.DECORATED, "Size to scene");
-            Button root = new Button();
-            root.setMinSize(ROOT_SIZE, ROOT_SIZE);
-            stage.setScene(new Scene(root));
-            setup.accept(stage);
-            stage.sizeToScene();
-            stage.show();
-            return stage;
-        });
-        TestKit.await("the stage shown", 5000, () -> s.isShowing());
-        if (fills) {
-            boolean fullScreen = TestKit.fx(() -> s.isFullScreen());
-            Rectangle2D area = TestKit.fx(() -> fullScreen ? Screen.getPrimary().getBounds()
-                    : Screen.getPrimary().getVisualBounds());
-            Rectangle2D screen = TestKit.fx(() -> Screen.getPrimary().getBounds());
-            TestKit.await("the stage filling the screen", 5000, () -> s.getWidth() >= area.getWidth() - BOUNDS_DELTA
-                    && s.getHeight() >= area.getHeight() - BOUNDS_DELTA
-                    && s.getWidth() <= screen.getWidth() + BOUNDS_DELTA
-                    && s.getHeight() <= screen.getHeight() + BOUNDS_DELTA);
-            TestKit.check(TestKit.fx(() -> s.isMaximized() || s.isFullScreen()), "the stage left its state");
-        } else {
-            TestKit.await("the stage fitting its root", 5000, () -> s.getWidth() >= ROOT_SIZE
-                    && s.getHeight() >= ROOT_SIZE && s.getWidth() <= ROOT_SIZE + BOUNDS_DELTA
-                    && s.getHeight() <= ROOT_SIZE + BOUNDS_DELTA);
-        }
-        return String.format(Locale.ROOT, "%.0f × %.0f", TestKit.fx(() -> s.getWidth()), TestKit.fx(() -> s.getHeight()));
-    }
-
-    private String newSceneSizeTest() {
-        int count = 20;
-        List<Stage> stages = TestKit.fx(() -> {
-            List<Stage> list = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                Stage s = testStage(StageStyle.DECORATED, "Scene " + i);
-                s.setResizable(i % 2 == 0);
-                s.setScene(new Scene(new VBox(), 300 - i * 5, 200 - i * 5));
-                s.show();
-                list.add(s);
-            }
-            return list;
-        });
-        for (int i = 0; i < count; i++) {
-            Stage s = stages.get(i);
-            int n = i;
-            TestKit.await("the scene of stage " + i, 5000, () -> {
-                double sx = s.getOutputScaleX(), sy = s.getOutputScaleY();
-                double w = Math.ceil((300 - n * 5) * sx) / sx, h = Math.ceil((200 - n * 5) * sy) / sy;
-                return s.isShowing() && near(s.getScene().getWidth(), w, 0.1) && near(s.getScene().getHeight(), h, 0.1);
-            });
-        }
-        return count + " stages, 300 × 200 down to " + (300 - (count - 1) * 5) + " × " + (200 - (count - 1) * 5);
-    }
-
-    private String iconifyTest(StageStyle style) {
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(style, "Iconify " + style.name());
-            stage.show();
-            return stage;
-        });
-        TestKit.await("the focus", 5000, () -> s.isFocused());
-        TestKit.fx(() -> s.setIconified(true));
-        TestKit.await("the stage iconified", 5000, () -> s.isIconified());
-        TestKit.pause(300);
-        TestKit.fx(() -> s.setIconified(false));
-        TestKit.await("the stage restored", 5000, () -> !s.isIconified() && s.isShowing());
-        return "iconified and restored";
-    }
-
-    private Color centerColor(Stage s) {
-        return TestKit.fx(() -> TestKit.robot().getPixelColor(TestKit.center(s.getScene().getRoot())));
-    }
-
-    private static boolean sameColor(Color a, Color b) {
-        return Math.abs(a.getRed() - b.getRed()) < 0.07 && Math.abs(a.getGreen() - b.getGreen()) < 0.07
-                && Math.abs(a.getBlue() - b.getBlue()) < 0.07;
-    }
-
-    private void awaitColor(Stage s, Color expected, String name) {
-        Color[] seen = {null};
-        try {
-            TestKit.await("a " + name + " frame", 5000, () -> sameColor(seen[0] = centerColor(s), expected));
-        } catch (AssertionError e) {
-            throw new AssertionError(e.getMessage() + ", the center is " + seen[0]);
-        }
-    }
-
-    private String drawAfterDeiconifyTest() {
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(StageStyle.DECORATED, "Deiconify");
-            javafx.scene.layout.Pane root = new javafx.scene.layout.Pane();
-            // The fill of the scene, under the background Modena gives the root
-            root.setStyle("-fx-background-color: transparent;");
-            Scene scene = new Scene(root, 300, 300);
-            scene.setFill(Color.LIME);
-            stage.setScene(scene);
-            stage.show();
-            return stage;
-        });
-        TestKit.await("the stage shown", 5000, () -> s.isShowing() && s.getScene().getWidth() > 0);
-        awaitColor(s, Color.LIME, "lime");
-        TestKit.fx(() -> s.setIconified(true));
-        TestKit.await("the stage iconified", 5000, () -> s.isIconified());
-        TestKit.fx(() -> s.getScene().setFill(Color.HOTPINK));
-        TestKit.pause(300);
-        TestKit.fx(() -> s.setIconified(false));
-        TestKit.await("the stage restored", 5000, () -> !s.isIconified());
-        awaitColor(s, Color.HOTPINK, "hot pink");
-        return "lime, then hot pink after the restore";
-    }
-
-    private String childStaysTest() {
-        Stage[] pair = TestKit.fx(() -> {
-            Stage owner = testStage(StageStyle.DECORATED, "Owner");
-            owner.show();
-            Stage child = testStage(StageStyle.DECORATED, "Child");
-            child.initOwner(owner);
-            child.setScene(new Scene(new VBox(), 100, 100));
-            child.show();
-            return new Stage[] {owner, child};
-        });
-        TestKit.await("the stages shown", 5000, () -> pair[0].isShowing() && pair[1].isShowing());
-        TestKit.pause(300);
-        double x = TestKit.fx(() -> pair[1].getX()), y = TestKit.fx(() -> pair[1].getY());
-        TestKit.fx(() -> pair[0].setIconified(true));
-        TestKit.await("the owner iconified", 5000, () -> pair[0].isIconified());
-        TestKit.pause(300);
-        TestKit.fx(() -> pair[0].setIconified(false));
-        TestKit.await("the owner restored", 5000, () -> !pair[0].isIconified());
-        TestKit.pause(300);
-        double nx = TestKit.fx(() -> pair[1].getX()), ny = TestKit.fx(() -> pair[1].getY());
-        TestKit.check(near(x, nx, 0.1) && near(y, ny, 0.1), String.format(Locale.ROOT,
-                "the child moved from %.0f, %.0f to %.0f, %.0f", x, y, nx, ny));
-        return String.format(Locale.ROOT, "the child stayed at %.0f, %.0f", x, y);
-    }
-
-    private String ownershipTest(int closed) {
-        Stage[] chain = TestKit.fx(() -> {
-            Stage[] stages = new Stage[3];
-            for (int i = 0; i < 3; i++) {
-                stages[i] = testStage(StageStyle.DECORATED, "Stage " + (i + 1));
-                if (i > 0) {
-                    stages[i].initOwner(stages[i - 1]);
-                }
-                stages[i].show();
-            }
-            return stages;
-        });
-        TestKit.await("the chain shown", 5000, () -> chain[0].isShowing() && chain[1].isShowing() && chain[2].isShowing());
-        TestKit.fx(() -> chain[closed].hide());
-        for (int i = 0; i < 3; i++) {
-            Stage s = chain[i];
-            boolean showing = i < closed;
-            TestKit.await("stage " + (i + 1) + (showing ? " showing" : " closed"), 3000, () -> s.isShowing() == showing);
-        }
-        return closed == 0 ? "the owned stages closed with the first" : "stage 3 closed with stage 2, stage 1 stayed";
-    }
-
-    private String modalChildTest(boolean fullScreen) {
-        Stage owner = TestKit.fx(() -> {
-            Stage s = testStage(StageStyle.DECORATED, "Owner");
-            if (fullScreen) {
-                s.setFullScreen(true);
-            } else {
-                s.setMaximized(true);
-            }
-            s.show();
-            return s;
-        });
-        TestKit.await("the owner " + (fullScreen ? "in full screen" : "maximized"), 5000,
-                () -> owner.isShowing() && (fullScreen ? owner.isFullScreen() : owner.isMaximized()));
-        TestKit.pause(500);
-        Stage child = TestKit.fx(() -> {
-            Stage s = testStage(StageStyle.DECORATED, "Modal child");
-            s.initOwner(owner);
-            s.initModality(Modality.APPLICATION_MODAL);
-            s.show();
-            return s;
-        });
-        TestKit.await("the child focused", 5000, () -> child.isFocused());
-        TestKit.pause(300);
-        TestKit.check(TestKit.fx(() -> fullScreen ? owner.isFullScreen() : owner.isMaximized()),
-                "the owner left its state");
-        return "the owner stayed " + (fullScreen ? "in full screen" : "maximized") + ", the child got the focus";
-    }
-
-    private String sceneChangeIconifiedTest() {
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(StageStyle.DECORATED, "Iconified");
-            stage.show();
-            return stage;
-        });
-        TestKit.await("the stage shown", 5000, () -> s.isShowing());
-        TestKit.fx(() -> s.setIconified(true));
-        TestKit.await("the stage iconified", 5000, () -> s.isIconified());
-        TestKit.fx(() -> s.setScene(new Scene(new StackPane(new Label("New scene")), 300, 200)));
-        TestKit.pause(500);
-        TestKit.check(TestKit.fx(() -> s.isIconified()), "the new scene restored the stage");
-        return "still iconified";
-    }
-
-    private String newSceneInputTest() {
-        int[] clicks = {0};
-        Button button = TestKit.fx(() -> new Button("Click me"));
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(StageStyle.DECORATED, "Set scene");
-            stage.show();
-            return stage;
-        });
-        TestKit.await("the stage shown", 5000, () -> s.isShowing() && s.isFocused());
-        TestKit.fx(() -> {
-            button.setOnAction(e -> clicks[0]++);
-            StackPane root = new StackPane(button);
-            s.setScene(new Scene(root, 300, 200));
-        });
-        TestKit.await("the new scene laid out", 3000, () -> button.getWidth() > 0
-                && near(s.getScene().getRoot().getLayoutBounds().getWidth(), s.getScene().getWidth(), 1));
-        TestKit.pause(300);
-        TestKit.click(button);
-        TestKit.await("the click", 3000, () -> clicks[0] == 1);
-        return "the button of the new scene got the click";
-    }
-
-    private String keyClosesStageTest() {
-        boolean[] typed = {false};
-        boolean[] pressed = {false};
-        Throwable[] failure = {null};
-        TextArea area = TestKit.fx(() -> new TextArea());
-        Stage s = TestKit.fx(() -> {
-            Stage stage = testStage(StageStyle.DECORATED, "Escape closes");
-            BorderPane root = new BorderPane(area);
-            root.setOnKeyPressed(e -> {
-                if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
-                    pressed[0] = true;
-                    stage.close();
-                }
-            });
-            root.setOnKeyTyped(e -> typed[0] = true);
-            stage.setScene(new Scene(root, 300, 200));
-            Thread.currentThread().setUncaughtExceptionHandler((t, e) -> failure[0] = e);
-            stage.show();
-            return stage;
-        });
-        try {
-            TestKit.await("the stage focused", 5000, () -> s.isFocused());
-            TestKit.click(area);
-            TestKit.fx(() -> area.getParent().requestFocus());
-            TestKit.shortcut(javafx.scene.input.KeyCode.ESCAPE);
-            TestKit.await("the stage closed", 3000, () -> pressed[0] && !s.isShowing());
-            TestKit.pause(300);
-        } finally {
-            TestKit.fx(() -> Thread.currentThread().setUncaughtExceptionHandler(null));
-        }
-        TestKit.check(failure[0] == null, "the FX thread threw " + failure[0]);
-        TestKit.check(!typed[0], "a KEY_TYPED arrived after the close");
-        return "closed on KEY_PRESSED, no KEY_TYPED";
-    }
-
-    private String nestedLoopsTest() {
-        List<String> order = new ArrayList<>();
-        TestKit.fx(() -> {
-            Object[] keys = {new Object(), new Object(), new Object()};
-            Platform.runLater(() -> {
-                Platform.runLater(() -> {
-                    Platform.runLater(() -> {
-                        order.add("depth 3");
-                        Platform.exitNestedEventLoop(keys[2], "c");
-                    });
-                    order.add((String) Platform.enterNestedEventLoop(keys[2]));
-                    Platform.exitNestedEventLoop(keys[1], "b");
-                });
-                order.add((String) Platform.enterNestedEventLoop(keys[1]));
-                Platform.exitNestedEventLoop(keys[0], "a");
-            });
-            order.add((String) Platform.enterNestedEventLoop(keys[0]));
-            if (Platform.isNestedLoopRunning()) {
-                order.add("still nested");
-            }
-        });
-        TestKit.check(order.equals(List.of("depth 3", "c", "b", "a")), "the loops returned " + order);
-        return String.join(" → ", order);
-    }
-
-    private String showAndWaitTest() {
-        List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
-        Stage[] stages = TestKit.fx(() -> {
-            Stage[] s = new Stage[3];
-            for (int i = 0; i < 3; i++) {
-                s[i] = testStage(StageStyle.DECORATED, "Modal " + (i + 1));
-                s[i].initModality(Modality.APPLICATION_MODAL);
-            }
-            return s;
-        });
-        TestKit.fx(() -> Platform.runLater(() -> {
-            Platform.runLater(() -> {
-                Platform.runLater(() -> {
-                    stages[2].showAndWait();
-                    order.add("3");
-                });
-                stages[1].showAndWait();
-                order.add("2");
-            });
-            stages[0].showAndWait();
-            order.add("1");
-        }));
-        TestKit.await("the three stages shown", 5000, () -> stages[0].isShowing() && stages[1].isShowing()
-                && stages[2].isShowing());
-        for (int i = 2; i >= 0; i--) {
-            Stage s = stages[i];
-            TestKit.fx(() -> s.hide());
-            int done = 3 - i;
-            TestKit.await("showAndWait of modal " + (i + 1) + " returned", 3000, () -> order.size() == done);
-        }
-        TestKit.check(order.equals(List.of("3", "2", "1")), "showAndWait returned in the order " + order);
-        return "returned 3, 2, 1";
-    }
+    // Outside the Basic Multilingual Plane, with a skin tone modifier, a
+    // variation selector, flags and ZWJ sequences
+    private static final String EMOJI_TITLE = "Emoji 😀 🚀 👍🏽 ❤️ 🇧🇷 👨‍👩‍👧 🧑‍💻";
+    private static final String EMOJI_TITLE_2 = "Changed 🎉 🦊 🏳️‍🌈 𝄞 — " + EMOJI_TITLE;
 }

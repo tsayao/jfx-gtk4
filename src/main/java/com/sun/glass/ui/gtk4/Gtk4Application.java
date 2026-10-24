@@ -492,6 +492,8 @@ public final class Gtk4Application extends Application {
             }
             monitorSignals.connect(monitor, "invalidate", this, "onMonitorChanged", void.class, GObject.class);
             monitorSignals.connect(monitor, "notify::scale", this, "onMonitorChanged", void.class, GObject.class);
+            // A monitor added at runtime comes before its geometry, which only notifies
+            monitorSignals.connect(monitor, "notify::geometry", this, "onMonitorChanged", void.class, GObject.class);
             monitor.unref();
         }
     }
