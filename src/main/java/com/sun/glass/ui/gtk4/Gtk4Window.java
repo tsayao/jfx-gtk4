@@ -1254,6 +1254,12 @@ public class Gtk4Window extends Window implements DmaBufPresenter {
         if ((viewWidth <= 0 || viewHeight <= 0) && contentW > 0 && contentH > 0 && currentView != null) {
             currentView.notifyResize(contentW, contentH);
         }
+        if (!mapped && windowWidth <= 0 && windowHeight <= 0) {
+            // The compositor sizes the window once it shows: until then the
+            // stage has the size asked for, as with the other platforms, which
+            // applications such as FXGL read right after show()
+            notifyResize(WindowEvent.RESIZE, newW, newH);
+        }
     }
 
     /**

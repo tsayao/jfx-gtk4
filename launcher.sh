@@ -83,7 +83,9 @@
 # The environment variables GDK_DISABLE and GSK_DEBUG are passed to the demos.
 # The extra JVM options are passed to the demos. The demos are eyecandy, the
 # showcases of the Prism renderer in one window (-Deyecandy.show=fractals
-# starts on one), and tests, which runs the tests of every lab, in a tab per
+# starts on one), games, a Breakout made with FXGL, which ./gradlew fxgl
+# downloads first (-Dgames.autoplay=true plays by itself; "all" leaves it out
+# until then), and tests, which runs the tests of every lab, in a tab per
 # lab: -Dtests.run=true runs them at startup, -Dtests.exit=true exits
 # afterwards, with status 1 on a failure, and -Dtests.labs=robot,windows keeps
 # only some labs. Under GNOME the tests get -Dglass.gtk4.testSession=gnome, so
@@ -123,7 +125,7 @@ MONITORS=
 
 usage() {
     sed -n '/^# Runs one or more/,/^[^#]/p' "$0" | sed -e '/^[^#]/d' -e 's/^# \{0,1\}//'
-    echo "Demos: $(demos | paste -sd' ' -)"
+    echo "Apps: $(demos | paste -sd' ' -)"
     exit "${1:-0}"
 }
 
@@ -181,8 +183,13 @@ case "$BACKDROP" in
     off) BACKDROP_OPTION=-Dglass.gtk4.backdrop=false ;;
     *) echo "Unknown backdrop: $BACKDROP (on or off)" >&2; exit 2 ;;
 esac
+# The games need FXGL, which ./gradlew fxgl downloads
+FXGL_CLASSPATH=$ROOT/build/fxgl.classpath
 if [ "$APPS" = all ]; then
     APPS=$(demos | paste -sd, -)
+    if [ ! -f "$FXGL_CLASSPATH" ]; then
+        APPS=$(printf '%s' "$APPS" | tr ',' '\n' | grep -vx games | paste -sd, -)
+    fi
 fi
 CLASSES=
 for app in $(printf '%s' "$APPS" | tr ',' ' '); do
@@ -204,6 +211,13 @@ if [ -z "$CLASSES" ]; then
     echo "No demos given" >&2
     exit 2
 fi
+case " $CLASSES " in
+    *" GamesDemo "*)
+        if [ ! -f "$FXGL_CLASSPATH" ]; then
+            echo "FXGL not downloaded: run ./gradlew fxgl" >&2
+            exit 1
+        fi ;;
+esac
 
 RUN_ARGS=$ROOT/build/run.args
 if [ ! -f "$RUN_ARGS" ]; then
@@ -613,7 +627,12 @@ for class in $CLASSES; do
         TestsDemo)
             [ "$COMPOSITOR" = gnome ] && TEST_SESSION=-Dglass.gtk4.testSession=gnome ;;
     esac
-    (run -Dprism.verbose=true -Djavafx.enablePreview=true \
+    if [ "$class" = GamesDemo ]; then
+        # FXGL joins the plugin on the class path
+        sed '/^"-cp"$/{n;s|"$|:'"$(cat "$FXGL_CLASSPATH")"'"|}' "$RUN_ARGS" > "$LOGS/games.args"
+    fi
+    (if [ "$class" = GamesDemo ]; then RUN_ARGS=$LOGS/games.args; fi
+     run -Dprism.verbose=true -Djavafx.enablePreview=true \
         -Djavafx.suppressPreviewWarning=true $TEST_SESSION $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
         | tee "$LOGS/$name.log" | sed -u "s/^/[$name] /") &
     PIDS="$PIDS $!"

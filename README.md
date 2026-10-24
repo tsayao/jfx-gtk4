@@ -225,24 +225,33 @@ be removed.
 
 ## Demos
 
-`demos/` has two applications, which `launcher.sh` runs (see below):
+`demos/` has three applications, which `launcher.sh` runs (see below):
 
 - `eyecandy`, the showcases of the Prism renderer in one window, chosen in
   the middle of its header bar or with Ctrl+1 to Ctrl+5: Nebula (a planet, its
   moon, a galaxy and a nebula in 3D), Fractals (Mandelbrot and Julia sets
   computed in the background, geometric fractals and a Menger sponge),
   Fireworks, Disco and Aurora. `-Deyecandy.show=fractals` starts on one;
+- `games`, a Breakout made with [FXGL](https://github.com/AlmasB/FXGL), the
+  game engine for JavaFX: its entities, collisions, input, particles,
+  animations and menus. `./gradlew fxgl` downloads FXGL first, which the
+  launcher then adds to the class path. The mouse or the arrows move the
+  paddle, the click or Space launches the ball, and `-Dgames.autoplay=true`
+  plays by itself;
 - `tests`, the tests of the platform integration (see [Tests](#tests)).
 
 ```
 ./launcher.sh
 ./launcher.sh -- -Deyecandy.show=fractals
+./gradlew fxgl && ./launcher.sh --apps=games
 ```
 
 ![Fractals: the Mandelbrot set, a Menger sponge and geometric fractals](docs/images/fractals-mandelbrot.jpg)
 
 
 ![Nebula, Fireworks, Disco and Aurora](docs/images/eyecandy.jpg)
+
+![Neon Breakout, made with FXGL](docs/images/games.jpg)
 
 On KDE Plasma (`./launcher.sh --compositor=kde`), the windows are
 `GtkWindow`s with the Breeze theme of GTK instead of libadwaita:

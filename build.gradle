@@ -7,6 +7,7 @@ def jfxLib = new File(jfxSdk, 'lib')
 def girDir = findProperty('girDir') ?: '/usr/share/gir-1.0'
 def vkRegistry = findProperty('vkRegistry') ?: '/usr/share/vulkan/registry/vk.xml'
 def antlr4Version = '4.7.2'
+def fxglVersion = '25.0.1'
 
 def jfxPackages = [
     'javafx.base/com.sun.javafx',
@@ -50,10 +51,15 @@ repositories {
 
 configurations {
     antlr
+    // The game engine of the games demo, over the JavaFX of the SDK
+    fxgl {
+        exclude group: 'org.openjfx'
+    }
 }
 
 dependencies {
     antlr "org.antlr:antlr4:${antlr4Version}:complete"
+    fxgl "com.github.almasb:fxgl:${fxglVersion}"
 }
 
 java {
@@ -533,6 +539,17 @@ tasks.register('writeRunArgs') {
 
 tasks.named('jar') {
     finalizedBy 'writeRunArgs'
+}
+
+tasks.register('fxgl') {
+    description = 'Downloads FXGL for the games demo and writes its class path to build/fxgl.classpath'
+    def out = layout.buildDirectory.file('fxgl.classpath')
+    def jars = configurations.fxgl
+    inputs.files jars
+    outputs.file out
+    doLast {
+        out.get().asFile.text = jars.files.collect { portablePath(it) }.join(File.pathSeparator) + '\n'
+    }
 }
 
 tasks.register('runArgs') {
