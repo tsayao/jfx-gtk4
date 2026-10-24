@@ -254,7 +254,10 @@ be removed.
 ![Neon Breakout, made with FXGL](docs/images/games.jpg)
 
 On KDE Plasma (`./launcher.sh --compositor=kde`), the windows are
-`GtkWindow`s with the Breeze theme of GTK instead of libadwaita:
+`GtkWindow`s with the Breeze theme of GTK instead of libadwaita. KWin offsets
+the area it blurs behind the windows from the one GTK gives it, so there the
+backdrop is off (`-Dglass.gtk4.backdrop.kwin=true` turns it on, as the
+launcher does for `eyecandy`):
 
 ![Nebula on KDE Plasma](docs/images/plasma-eyecandy.jpg)
 

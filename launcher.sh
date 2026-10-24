@@ -364,6 +364,51 @@ trap 'exit 130' INT TERM
 # The end of a headless session after its screenshot
 trap 'exit 0' USR1
 
+# The demos are compiled once into build/demos, again only when a source, the
+# plugin or FXGL changes, as running them from their sources compiled them on
+# every start
+DEMO_CLASSES=$ROOT/build/demos
+
+# The class path of the plugin in build/run.args, for javac
+plugin_classpath() {
+    awk '/^"-cp"$/ { getline; gsub(/"/, ""); print }' "$ROOT/build/run.args"
+}
+
+compile_demos() {
+    stamp=$DEMO_CLASSES/.stamp
+    cp=$(plugin_classpath)
+    [ -f "$FXGL_CLASSPATH" ] && cp=$cp:$(cat "$FXGL_CLASSPATH")
+    if [ ! -f "$stamp" ] || [ -n "$(find "$DEMOS" "$ROOT/build/run.args" "$ROOT/build/libs/jfx-wayland.jar" \
+            "$FXGL_CLASSPATH" -newer "$stamp" -print 2>/dev/null | head -1)" ]; then
+        rm -rf "$DEMO_CLASSES"
+        sources=$CLASSES
+    else
+        sources=
+        for class in $CLASSES; do
+            [ -f "$DEMO_CLASSES/$class.class" ] || sources="$sources $class"
+        done
+    fi
+    [ -z "$sources" ] && return
+    echo "Compiling the demos into $DEMO_CLASSES"
+    mkdir -p "$DEMO_CLASSES"
+    {
+        grep -E '^"--(module-path|add-exports|add-modules)=' "$ROOT/build/run.args"
+        printf '"-cp"\n"%s"\n' "$cp"
+    } > "$LOGS/javac.args"
+    files=
+    for class in $sources; do
+        files="$files $DEMOS/$class.java"
+    done
+    (cd "$ROOT" && javac @"$LOGS/javac.args" -nowarn -d "$DEMO_CLASSES" -sourcepath "$DEMOS" $files) \
+        > "$LOGS/javac.log" 2>&1
+    if [ $? -ne 0 ]; then
+        cat "$LOGS/javac.log" >&2
+        rm -rf "$DEMO_CLASSES"
+        exit 1
+    fi
+    [ "$sources" = "$CLASSES" ] && touch "$stamp"
+}
+
 run() {
     cd "$ROOT" || exit 1
     exec java @"$RUN_ARGS" \
@@ -614,6 +659,7 @@ start_none() {
 }
 
 PIDS=
+compile_demos
 if [ -n "$LAUNCHER_BUTTON_LAYOUT" ]; then
     gsettings set org.gnome.desktop.wm.preferences button-layout "$LAUNCHER_BUTTON_LAYOUT" 2>/dev/null
 fi
@@ -626,14 +672,18 @@ for class in $CLASSES; do
     case "$class" in
         TestsDemo)
             [ "$COMPOSITOR" = gnome ] && TEST_SESSION=-Dglass.gtk4.testSession=gnome ;;
+        EyeCandyDemo)
+            # Its extended windows have no title bar of GTK, where the blur
+            # area that KWin offsets shows the most
+            TEST_SESSION=-Dglass.gtk4.backdrop.kwin=true ;;
     esac
-    if [ "$class" = GamesDemo ]; then
-        # FXGL joins the plugin on the class path
-        sed '/^"-cp"$/{n;s|"$|:'"$(cat "$FXGL_CLASSPATH")"'"|}' "$RUN_ARGS" > "$LOGS/games.args"
-    fi
-    (if [ "$class" = GamesDemo ]; then RUN_ARGS=$LOGS/games.args; fi
+    # The compiled demos, and for the games FXGL, join the plugin on the class path
+    extra=$DEMO_CLASSES
+    [ "$class" = GamesDemo ] && extra=$extra:$(cat "$FXGL_CLASSPATH")
+    sed '/^"-cp"$/{n;s|"$|:'"$extra"'"|}' "$RUN_ARGS" > "$LOGS/$name.args"
+    (RUN_ARGS=$LOGS/$name.args
      run -Dprism.verbose=true -Djavafx.enablePreview=true \
-        -Djavafx.suppressPreviewWarning=true $TEST_SESSION $JVM_OPTIONS "$DEMOS/$class.java" 2>&1 \
+        -Djavafx.suppressPreviewWarning=true $TEST_SESSION $JVM_OPTIONS "$class" 2>&1 \
         | tee "$LOGS/$name.log" | sed -u "s/^/[$name] /") &
     PIDS="$PIDS $!"
 done

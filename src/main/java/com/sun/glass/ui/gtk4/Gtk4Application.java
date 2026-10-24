@@ -73,7 +73,15 @@ public final class Gtk4Application extends Application {
 
     static final boolean ADWAITA = useAdwaita() && AdwWindow.isAvailable();
 
-    static final boolean BACKDROP = Boolean.getBoolean("glass.gtk4.backdrop");
+    /**
+     * KWin offsets the area it blurs behind a client-side decorated window
+     * from the region in surface coordinates that GTK gives it, so there the
+     * backdrop is off unless -Dglass.gtk4.backdrop.kwin=true.
+     */
+    private static final boolean BACKDROP_OFF_ON_KWIN = Boolean.getBoolean("glass.gtk4.backdrop")
+            && isDesktop("KDE") && !Boolean.getBoolean("glass.gtk4.backdrop.kwin");
+
+    static final boolean BACKDROP = Boolean.getBoolean("glass.gtk4.backdrop") && !BACKDROP_OFF_ON_KWIN;
 
     static final float UI_SCALE_OVERRIDE = PrismSettings.allowHiDPIScaling
             ? parseScale("glass.gtk.uiScale") : -1.0f;
@@ -105,8 +113,13 @@ public final class Gtk4Application extends Application {
         if (value != null) {
             return !"false".equals(value);
         }
+        return isDesktop("GNOME");
+    }
+
+    /** Whether XDG_CURRENT_DESKTOP names the desktop. */
+    private static boolean isDesktop(String name) {
         String desktop = System.getenv("XDG_CURRENT_DESKTOP");
-        return desktop != null && Arrays.stream(desktop.split(":")).anyMatch("GNOME"::equalsIgnoreCase);
+        return desktop != null && Arrays.stream(desktop.split(":")).anyMatch(name::equalsIgnoreCase);
     }
 
     private static float parseScale(String name) {
@@ -419,7 +432,10 @@ public final class Gtk4Application extends Application {
 
     private static void publishBackdropState() {
         boolean active = BACKDROP && Gtk4BackgroundEffect.isSupported();
-        if (BACKDROP && !active) {
+        if (BACKDROP_OFF_ON_KWIN) {
+            System.err.println("Gtk4: KWin blurs the wrong area behind the windows, so the window backdrop is"
+                    + " disabled (-Dglass.gtk4.backdrop.kwin=true enables it)");
+        } else if (BACKDROP && !active) {
             System.err.println("Gtk4: the compositor does not support ext-background-effect-v1,"
                     + " so the window backdrop is disabled");
         }
