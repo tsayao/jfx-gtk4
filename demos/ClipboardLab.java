@@ -216,7 +216,7 @@ public class ClipboardLab {
 
     /** Text from the Basic Multilingual Plane and the supplementary planes, with combining marks. */
     private static final String UNICODE = """
-            Latin: Olá, coração, façade, naïve, Ångström
+            Latin: café, résumé, façade, naïve, Ångström
             Greek: Καλημέρα · Cyrillic: Здравствуйте · Hebrew: שלום · Arabic: مرحبا
             CJK: 日本語 中文 한국어 · Thai: สวัสดี · Devanagari: नमस्ते
             Supplementary: 😀 🚀 🧪 𝄞 𝔘𝔫𝔦𝔠𝔬𝔡𝔢 𠜎 𓀀
@@ -429,7 +429,7 @@ public class ClipboardLab {
         StringBuilder sb = new StringBuilder(1 << 20);
         int line = 0;
         while (sb.length() < (1 << 20) - 80) {
-            sb.append(String.format(Locale.ROOT, "%06d The quick brown fox jumps over the lazy dog. Ação 😀%n",
+            sb.append(String.format(Locale.ROOT, "%06d The quick brown fox jumps over the lazy dog. Café 😀%n",
                     line++));
         }
         return sb.toString();
@@ -467,7 +467,7 @@ public class ClipboardLab {
             Path dir = Path.of(System.getProperty("java.io.tmpdir"), "jfx-clipboard-demo");
             Files.createDirectories(dir);
             List<File> files = new ArrayList<>();
-            for (String name : List.of("first file.txt", "segundo-ação.txt")) {
+            for (String name : List.of("first file.txt", "second-café.txt")) {
                 Path file = dir.resolve(name);
                 Files.writeString(file, "Copied from the JavaFX Clipboard Lab: " + name + "\n");
                 files.add(file.toFile());
@@ -887,7 +887,7 @@ public class ClipboardLab {
         suite.auto("Copy from another application", "Copies text and then an image with wl-copy and reads them",
                 () -> {
                     requireWlClipboard();
-                    String text = "From wl-copy: Olá 😀 " + System.nanoTime() % 100000;
+                    String text = "From wl-copy: Café 😀 " + System.nanoTime() % 100000;
                     Process textCopy = wlCopy(text.getBytes(StandardCharsets.UTF_8), "text/plain;charset=utf-8");
                     try {
                         await("the text of wl-copy", 5000,

@@ -249,8 +249,8 @@ public class RenderLab {
 
     private final Map<Tab, List<DoubleConsumer>> ticks = new HashMap<>();
     private final TabPane tabs = new TabPane();
-    private final CheckBox animate = new CheckBox("Animar");
-    private final CheckBox cycle = new CheckBox("Ciclar abas");
+    private final CheckBox animate = new CheckBox("Animate");
+    private final CheckBox cycle = new CheckBox("Cycle tabs");
     private final Label fpsLabel = new Label("— fps");
     private final Region fill = new Region();
     private final Random random = new Random(7);
@@ -274,16 +274,16 @@ public class RenderLab {
         animate.setSelected(true);
         cycle.setSelected(Boolean.getBoolean("render.cycle"));
 
-        addTab("Formas", this::shapes);
-        addTab("Pinturas", this::paints);
-        addTab("Texto", this::text);
-        addTab("Imagens", this::images);
-        addTab("Efeitos", this::effects);
-        addTab("Blend e clip", this::blending);
+        addTab("Shapes", this::shapes);
+        addTab("Paints", this::paints);
+        addTab("Text", this::text);
+        addTab("Images", this::images);
+        addTab("Effects", this::effects);
+        addTab("Blend and clip", this::blending);
         addTab("Canvas", this::canvas);
         addTab("3D", this::scene3d);
-        addTab("CSS e controles", this::controls);
-        addTab("Estresse", this::stress);
+        addTab("CSS and controls", this::controls);
+        addTab("Stress", this::stress);
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getSelectionModel().select(Integer.getInteger("render.tab", 0));
         defineTests();
@@ -297,7 +297,7 @@ public class RenderLab {
         HBox fps = new HBox(fpsLabel);
         fps.getStyleClass().add("pill");
         HBox pipeline = new HBox(new Label(pipelineName() + " · 3D "
-                + (Platform.isSupported(ConditionalFeature.SCENE3D) ? "sim" : "não")));
+                + (Platform.isSupported(ConditionalFeature.SCENE3D) ? "yes" : "no")));
         pipeline.getStyleClass().add("pill");
         HBox bar = new HBox(10, fps, pipeline, animate, cycle);
         bar.setAlignment(Pos.CENTER_LEFT);
@@ -436,7 +436,7 @@ public class RenderLab {
         rect.getStrokeDashArray().addAll(18.0, 8.0, 2.0, 8.0);
         rect.setStrokeLineCap(StrokeLineCap.ROUND);
         tick(t -> rect.setStrokeDashOffset(-t * 40));
-        card("Retângulo arredondado", "Tracejado animado com pontas arredondadas", rect);
+        card("Rounded rectangle", "Animated dashes with round caps", rect);
 
         HBox types = new HBox(18);
         types.setAlignment(Pos.CENTER);
@@ -449,7 +449,7 @@ public class RenderLab {
             guide.setStroke(Color.WHITE);
             types.getChildren().add(new StackPane(c, guide));
         }
-        card("StrokeType", "INSIDE · CENTERED · OUTSIDE, linha branca marca o contorno", types);
+        card("StrokeType", "INSIDE · CENTERED · OUTSIDE, a white line marks the outline", types);
 
         Group arcs = new Group();
         ArcType[] arcTypes = ArcType.values();
@@ -467,7 +467,7 @@ public class RenderLab {
         ellipse.setFill(Color.web("#22d3ee", 0.25));
         ellipse.setStroke(Color.web("#22d3ee"));
         arcs.getChildren().add(ellipse);
-        card("Arcos e elipse", "OPEN · CHORD · ROUND com comprimento animado", arcs);
+        card("Arcs and ellipse", "OPEN · CHORD · ROUND with animated length", arcs);
 
         Polygon star = new Polygon();
         for (int i = 0; i < 5; i++) {
@@ -486,7 +486,7 @@ public class RenderLab {
         HBox fillRules = new HBox(10, star, evenOdd);
         fillRules.setAlignment(Pos.CENTER);
         tick(t -> star.setRotate(t * 30));
-        card("Regras de preenchimento", "Polígono estrelado (NON_ZERO) e caminho EVEN_ODD", fillRules);
+        card("Fill rules", "Star polygon (NON_ZERO) and EVEN_ODD path", fillRules);
 
         Group joins = new Group();
         StrokeLineJoin[] js = StrokeLineJoin.values();
@@ -500,7 +500,7 @@ public class RenderLab {
             p.setFill(null);
             joins.getChildren().add(p);
         }
-        card("Junções e pontas", "MITER/SQUARE · BEVEL/BUTT · ROUND/ROUND", joins);
+        card("Joins and caps", "MITER/SQUARE · BEVEL/BUTT · ROUND/ROUND", joins);
 
         Path path = new Path(new MoveTo(10, 120), new CubicCurveTo(40, 0, 120, 200, 160, 60),
                 new QuadCurveTo(190, 10, 230, 80), new ArcTo(40, 30, 0, 150, 160, true, false), new ClosePath());
@@ -508,7 +508,7 @@ public class RenderLab {
                 new Stop(0, Color.web("#f472b6", 0.6)), new Stop(1, Color.web("#38bdf8", 0.6))));
         path.setStroke(Color.WHITE);
         path.setStrokeWidth(1.5);
-        card("Path", "Cúbica, quadrática e ArcTo", new Group(path));
+        card("Path", "Cubic, quadratic and ArcTo", new Group(path));
 
         SVGPath heart = new SVGPath();
         heart.setContent("M 60 108 C 20 80 0 55 0 32 C 0 12 16 0 32 0 C 44 0 54 6 60 16 C 66 6 76 0 88 0 "
@@ -520,7 +520,7 @@ public class RenderLab {
             heart.setScaleX(s);
             heart.setScaleY(s);
         });
-        card("SVGPath", "Coração com gradiente radial e escala", heart);
+        card("SVGPath", "Heart with radial gradient and scale", heart);
 
         QuadCurve quad = new QuadCurve(10, 140, 120, -20, 230, 140);
         quad.setFill(null);
@@ -534,7 +534,7 @@ public class RenderLab {
             cubic.setControlY1(80 - 80 * Math.sin(t));
             cubic.setControlY2(80 + 80 * Math.sin(t));
         });
-        card("Curvas", "QuadCurve e CubicCurve com controles animados", new Group(quad, cubic));
+        card("Curves", "QuadCurve and CubicCurve with animated controls", new Group(quad, cubic));
 
         Shape a = new Circle(55, 80, 50);
         Shape b = new Rectangle(55, 40, 100, 80);
@@ -552,7 +552,7 @@ public class RenderLab {
         inter.setScaleY(0.6);
         HBox ops = new HBox(-30, new Group(union), new Group(sub), new Group(inter));
         ops.setAlignment(Pos.CENTER);
-        card("Operações de forma", "union · subtract · intersect", ops);
+        card("Shape operations", "union · subtract · intersect", ops);
 
         Group hair = new Group();
         double[] widths = {0.25, 0.5, 1, 1.5, 2, 3};
@@ -566,7 +566,7 @@ public class RenderLab {
             raw.setSmooth(false);
             hair.getChildren().addAll(l, raw);
         }
-        card("Linhas finas", "0.25 a 3 px, branco com antialiasing, rosa sem", hair);
+        card("Hairlines", "0.25 to 3 px, white with antialiasing, pink without", hair);
     }
 
     private void paints() {
@@ -586,11 +586,11 @@ public class RenderLab {
         Rectangle radial = new Rectangle(230, 160);
         tick(t -> radial.setFill(new RadialGradient(Math.toDegrees(t) % 360, 0.6, 0.5, 0.5, 0.25, true, CycleMethod.REFLECT,
                 new Stop(0, Color.web("#0ea5e9")), new Stop(0.5, Color.web("#f0abfc")), new Stop(1, Color.web("#1e1b4b")))));
-        card("RadialGradient", "Foco deslocado e animado com REFLECT", radial);
+        card("RadialGradient", "Animated off-center focus with REFLECT", radial);
 
         Rectangle pattern = new Rectangle(230, 160);
         tick(t -> pattern.setFill(new ImagePattern(texture, t * 20 % 64, t * 10 % 64, 64, 64, false)));
-        card("ImagePattern", "Ladrilho de 64 px rolando", pattern);
+        card("ImagePattern", "Scrolling 64 px tile", pattern);
 
         Group alpha = new Group();
         Color[] colors = {Color.web("#ef4444"), Color.web("#22c55e"), Color.web("#3b82f6")};
@@ -603,7 +603,7 @@ public class RenderLab {
             });
             alpha.getChildren().add(c);
         }
-        card("Transparência", "Três cores a 55% sobrepostas", alpha);
+        card("Transparency", "Three overlapping colors at 55%", alpha);
 
         HBox swatches = new HBox();
         for (int i = 0; i < 24; i++) {
@@ -612,27 +612,27 @@ public class RenderLab {
             tick(t -> r.setFill(Color.hsb((k * 15 + t * 60) % 360, 0.85, 0.95)));
             swatches.getChildren().add(r);
         }
-        card("Cores sólidas", "Faixas HSB em rotação", swatches);
+        card("Solid colors", "Rotating HSB bands", swatches);
 
-        Text grad = new Text("GRADIENTE");
+        Text grad = new Text("GRADIENT");
         grad.setFont(Font.font("System", FontWeight.BLACK, 36));
         grad.setFill(new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
                 new Stop(0, Color.web("#facc15")), new Stop(1, Color.web("#ec4899"))));
         grad.setStroke(new LinearGradient(0, 0, 1, 0, true, CycleMethod.REPEAT,
                 new Stop(0, Color.WHITE), new Stop(0.1, Color.web("#38bdf8"))));
         grad.setStrokeWidth(1.5);
-        card("Pintura em texto", "Preenchimento e contorno com gradientes", grad);
+        card("Text paint", "Gradient fill and stroke", grad);
     }
 
     private void text() {
         VBox sizes = new VBox(0);
         for (int s : new int[] {8, 10, 12, 16, 22, 30, 40}) {
-            Text t = new Text(s + "px Ágil çãõ");
+            Text t = new Text(s + "px Café naïve Ångström");
             t.setFont(Font.font(s));
             t.setFill(Color.WHITE);
             sizes.getChildren().add(t);
         }
-        card("Tamanhos", "8 a 40 px com acentos", sizes);
+        card("Sizes", "8 to 40 px with accents", sizes);
 
         VBox smoothing = new VBox(6);
         for (FontSmoothingType type : FontSmoothingType.values()) {
@@ -642,24 +642,24 @@ public class RenderLab {
             t.setFill(Color.WHITE);
             t.setWrappingWidth(230);
             smoothing.getChildren().add(t);
-            Text dark = new Text(type + ": texto escuro em fundo claro");
+            Text dark = new Text(type + ": dark text on a light background");
             dark.setFontSmoothingType(type);
             dark.setFill(Color.BLACK);
             StackPane light = new StackPane(dark);
             light.setBackground(new Background(new BackgroundFill(Color.web("#f1f5f9"), null, null)));
             smoothing.getChildren().add(light);
         }
-        card("Suavização", "GRAY e LCD sobre fundos escuro e claro", smoothing);
+        card("Smoothing", "GRAY and LCD on dark and light backgrounds", smoothing);
 
         VBox styles = new VBox(4);
-        Text bold = new Text("Negrito");
+        Text bold = new Text("Bold");
         bold.setFont(Font.font("System", FontWeight.BOLD, 20));
-        Text italic = new Text("Itálico");
+        Text italic = new Text("Italic");
         italic.setFont(Font.font("System", FontPosture.ITALIC, 20));
-        Text under = new Text("Sublinhado");
+        Text under = new Text("Underline");
         under.setUnderline(true);
         under.setFont(Font.font(20));
-        Text strike = new Text("Riscado");
+        Text strike = new Text("Strikethrough");
         strike.setStrikethrough(true);
         strike.setFont(Font.font(20));
         Text mono = new Text("Monospace 0O1lI");
@@ -668,9 +668,9 @@ public class RenderLab {
             t.setFill(Color.WHITE);
         }
         styles.getChildren().addAll(bold, italic, under, strike, mono);
-        card("Estilos", "Peso, postura, decorações e monoespaçada", styles);
+        card("Styles", "Weight, posture, decorations and monospace", styles);
 
-        Text spin = new Text("Rotação ↻");
+        Text spin = new Text("Rotation ↻");
         spin.setFont(Font.font("System", FontWeight.BOLD, 28));
         spin.setFill(Color.web("#fde68a"));
         tick(t -> {
@@ -679,13 +679,13 @@ public class RenderLab {
             spin.setScaleX(s);
             spin.setScaleY(s);
         });
-        card("Transformações", "Texto girando e escalando", spin);
+        card("Transforms", "Text rotating and scaling", spin);
 
         TextFlow flow = new TextFlow();
         Text t1 = new Text("TextFlow ");
         t1.setFill(Color.web("#38bdf8"));
         t1.setFont(Font.font("System", FontWeight.BOLD, 16));
-        Text t2 = new Text("mistura estilos, emoji 🎨🚀✨, ");
+        Text t2 = new Text("mixes styles, emoji 🎨🚀✨, ");
         t2.setFill(Color.WHITE);
         Text t3 = new Text("עברית ");
         t3.setFill(Color.web("#f472b6"));
@@ -693,12 +693,12 @@ public class RenderLab {
         t4.setFill(Color.web("#a3e635"));
         Text t5 = new Text("日本語 中文 한국어 ");
         t5.setFill(Color.web("#fbbf24"));
-        Text t6 = new Text("e quebra de linha automática dentro da largura do cartão.");
+        Text t6 = new Text("and wraps lines automatically within the width of the card.");
         t6.setFill(Color.web("#cbd5e1"));
         flow.getChildren().addAll(t1, t2, t3, t4, t5, t6);
         flow.setPrefWidth(230);
         flow.setTextAlignment(TextAlignment.JUSTIFY);
-        card("TextFlow", "Emoji colorido, bidi, CJK e justificado", flow);
+        card("TextFlow", "Color emoji, bidi, CJK and justified", flow);
 
         Text many = new Text();
         many.setFill(Color.web("#e2e8f0"));
@@ -714,7 +714,7 @@ public class RenderLab {
             }
             many.setText(sb.toString());
         });
-        card("Glifos dinâmicos", "Texto trocado a cada quadro (cache de glifos)", many);
+        card("Dynamic glyphs", "Text changed every frame (glyph cache)", many);
     }
 
     private void images() {
@@ -728,20 +728,20 @@ public class RenderLab {
         smooth.setFitHeight(110);
         HBox filters = new HBox(10, nearest, smooth);
         filters.setAlignment(Pos.CENTER);
-        card("Filtragem", "Imagem 16×16 ampliada: vizinho mais próximo e linear", filters);
+        card("Filtering", "A 16×16 image scaled up: nearest neighbor and linear", filters);
 
         ImageView viewport = new ImageView(photo);
         viewport.setFitWidth(230);
         viewport.setFitHeight(160);
         tick(t -> viewport.setViewport(new Rectangle2D(64 + 60 * Math.cos(t * 0.7), 64 + 60 * Math.sin(t * 0.9), 128, 89)));
-        card("Viewport", "Recorte animado de uma imagem 256×256", viewport);
+        card("Viewport", "Animated viewport of a 256×256 image", viewport);
 
         ImageView rotated = new ImageView(photo);
         rotated.setFitWidth(120);
         rotated.setPreserveRatio(true);
         rotated.setRotationAxis(new javafx.geometry.Point3D(1, 1, 0));
         tick(t -> rotated.setRotate(t * 40));
-        card("Imagem transformada", "Rotação em torno de eixo diagonal", rotated);
+        card("Transformed image", "Rotation around a diagonal axis", rotated);
 
         int w = 230;
         int h = 160;
@@ -759,7 +759,7 @@ public class RenderLab {
             }
             plasma.getPixelWriter().setPixels(0, 0, w, h, PixelFormat.getIntArgbInstance(), pixels, 0, w);
         });
-        card("WritableImage", "Envio de textura a cada quadro com PixelWriter", new ImageView(plasma));
+        card("WritableImage", "Texture upload every frame with PixelWriter", new ImageView(plasma));
 
         IntBuffer buffer = IntBuffer.allocate(w * h);
         PixelBuffer<IntBuffer> pixelBuffer = new PixelBuffer<>(w, h, buffer, PixelFormat.getIntArgbPreInstance());
@@ -778,7 +778,7 @@ public class RenderLab {
             }
             return null;
         }));
-        card("PixelBuffer", "Buffer NIO pré-multiplicado com alfa", new ImageView(bufferImage));
+        card("PixelBuffer", "Premultiplied NIO buffer with alpha", new ImageView(bufferImage));
 
         Group source = new Group();
         for (int i = 0; i < 6; i++) {
@@ -798,7 +798,7 @@ public class RenderLab {
             source.setRotate(t * 50);
             source.snapshot(params, snap);
         });
-        card("Snapshot", "Renderização para textura a cada quadro", snapView);
+        card("Snapshot", "Render to texture every frame", snapView);
 
         WritableImage big = new WritableImage(4096, 4096);
         PixelWriter pw = big.getPixelWriter();
@@ -816,7 +816,7 @@ public class RenderLab {
             double z = 256 + 3800 * (1 + Math.sin(t * 0.4)) / 2;
             bigView.setViewport(new Rectangle2D((4096 - z) / 2, (4096 - z) / 2, z, z * 160 / 230));
         });
-        card("Textura grande", "4096×4096 com zoom contínuo", bigView);
+        card("Large texture", "4096×4096 with continuous zoom", bigView);
     }
 
     private Node sample() {
@@ -843,38 +843,38 @@ public class RenderLab {
 
     private void effects() {
         DropShadow drop = new DropShadow(20, Color.web("#38bdf8"));
-        effect("Sombra projetada", drop, t -> {
+        effect("Drop shadow", drop, t -> {
             drop.setOffsetX(10 * Math.cos(t));
             drop.setOffsetY(10 * Math.sin(t));
         });
         InnerShadow inner = new InnerShadow(16, Color.BLACK);
-        effect("Sombra interna", inner, t -> inner.setRadius(4 + 16 * (1 + Math.sin(t * 2)) / 2));
+        effect("Inner shadow", inner, t -> inner.setRadius(4 + 16 * (1 + Math.sin(t * 2)) / 2));
         GaussianBlur gauss = new GaussianBlur();
-        effect("Desfoque gaussiano", gauss, t -> gauss.setRadius(30 * (1 + Math.sin(t)) / 2));
+        effect("Gaussian blur", gauss, t -> gauss.setRadius(30 * (1 + Math.sin(t)) / 2));
         BoxBlur box = new BoxBlur(10, 10, 3);
-        effect("Desfoque de caixa", box, t -> box.setWidth(1 + 20 * (1 + Math.sin(t * 1.3)) / 2));
+        effect("Box blur", box, t -> box.setWidth(1 + 20 * (1 + Math.sin(t * 1.3)) / 2));
         MotionBlur motion = new MotionBlur(0, 25);
-        effect("Desfoque de movimento", motion, t -> motion.setAngle(t * 60 % 360));
+        effect("Motion blur", motion, t -> motion.setAngle(t * 60 % 360));
         Bloom bloom = new Bloom(0.3);
         effect("Bloom", bloom, t -> bloom.setThreshold(0.5 + 0.5 * Math.sin(t)));
         Glow glow = new Glow();
-        effect("Brilho", glow, t -> glow.setLevel((1 + Math.sin(t * 2)) / 2));
-        effect("Reflexo", new Reflection(4, 0.7, 0.6, 0), null);
+        effect("Glow", glow, t -> glow.setLevel((1 + Math.sin(t * 2)) / 2));
+        effect("Reflection", new Reflection(4, 0.7, 0.6, 0), null);
         ColorAdjust adjust = new ColorAdjust();
-        effect("Ajuste de cor", adjust, t -> adjust.setHue(Math.sin(t * 0.8)));
-        effect("Sépia", new SepiaTone(0.9), null);
-        effect("Sombra", new Shadow(12, Color.web("#a78bfa")), null);
+        effect("Color adjust", adjust, t -> adjust.setHue(Math.sin(t * 0.8)));
+        effect("Sepia", new SepiaTone(0.9), null);
+        effect("Shadow", new Shadow(12, Color.web("#a78bfa")), null);
 
         Lighting distant = new Lighting(new Light.Distant(45, 45, Color.WHITE));
         distant.setSurfaceScale(4);
-        effect("Luz distante", distant, t -> ((Light.Distant) distant.getLight()).setAzimuth(t * 60 % 360));
+        effect("Distant light", distant, t -> ((Light.Distant) distant.getLight()).setAzimuth(t * 60 % 360));
         Light.Point point = new Light.Point(0, 0, 60, Color.web("#fde68a"));
-        effect("Luz pontual", new Lighting(point), t -> {
+        effect("Point light", new Lighting(point), t -> {
             point.setX(75 + 70 * Math.cos(t));
             point.setY(45 + 40 * Math.sin(t));
         });
         Light.Spot spot = new Light.Spot(75, 45, 120, 2, Color.web("#f472b6"));
-        effect("Luz spot", new Lighting(spot), t -> {
+        effect("Spot light", new Lighting(spot), t -> {
             spot.setPointsAtX(75 + 60 * Math.cos(t * 1.4));
             spot.setPointsAtY(45 + 40 * Math.sin(t * 1.4));
         });
@@ -883,7 +883,7 @@ public class RenderLab {
         int mh = 100;
         FloatMap map = new FloatMap(mw, mh);
         DisplacementMap displacement = new DisplacementMap(map);
-        effect("Deslocamento", displacement, t -> {
+        effect("Displacement", displacement, t -> {
             for (int x = 0; x < mw; x++) {
                 float v = (float) (Math.sin(x / 8.0 + t * 3) * 0.04);
                 for (int y = 0; y < mh; y++) {
@@ -892,7 +892,7 @@ public class RenderLab {
             }
         });
         PerspectiveTransform perspective = new PerspectiveTransform();
-        effect("Perspectiva", perspective, t -> {
+        effect("Perspective", perspective, t -> {
             double d = 30 * Math.sin(t);
             perspective.setUlx(0);
             perspective.setUly(d);
@@ -906,7 +906,7 @@ public class RenderLab {
         ColorInput tint = new ColorInput(0, 0, 150, 90, Color.web("#22d3ee"));
         Blend blend = new Blend(BlendMode.MULTIPLY);
         blend.setTopInput(tint);
-        effect("Blend com ColorInput", blend, t -> blend.setOpacity((1 + Math.sin(t)) / 2));
+        effect("Blend with ColorInput", blend, t -> blend.setOpacity((1 + Math.sin(t)) / 2));
         Blend image = new Blend(BlendMode.SCREEN, null, new ImageInput(texture, 0, 0));
         effect("ImageInput", image, null);
         DropShadow chained = new DropShadow(18, Color.web("#f472b6"));
@@ -914,7 +914,7 @@ public class RenderLab {
         Glow chainGlow = new Glow(0.8);
         chainGlow.setInput(chainBlur);
         chained.setInput(chainGlow);
-        effect("Cadeia de efeitos", chained, null);
+        effect("Effect chain", chained, null);
     }
 
     private void blending() {
@@ -930,7 +930,7 @@ public class RenderLab {
             l.setStyle("-fx-font-size: 7px;");
             modes.getChildren().add(new VBox(l, cell));
         }
-        wide("Modos de blend", "Todos os BlendMode sobre um gradiente", modes, 250, 250);
+        wide("Blend modes", "Every BlendMode over a gradient", modes, 250, 250);
 
         Group clipped = new Group();
         for (int i = 0; i < 12; i++) {
@@ -945,7 +945,7 @@ public class RenderLab {
             clip.setCenterY(88 + 40 * Math.sin(t * 2));
             clip.setRadius(40 + 20 * Math.sin(t * 3));
         });
-        card("Clip", "Recorte circular animado", clipped);
+        card("Clip", "Animated circular clip", clipped);
 
         Text clipText = new Text("CLIP");
         clipText.setFont(Font.font("System", FontWeight.BLACK, 80));
@@ -956,7 +956,7 @@ public class RenderLab {
         clipText.setX(20);
         clipText.setY(120);
         tick(t -> clipText.setX(20 + 20 * Math.sin(t)));
-        card("Clip por texto", "Imagem recortada por glifos", behind);
+        card("Text clip", "An image clipped by glyphs", behind);
 
         Group groupAlpha = new Group(new Circle(60, 80, 50, Color.web("#ef4444")), new Circle(110, 80, 50, Color.web("#3b82f6")));
         groupAlpha.setOpacity(0.5);
@@ -967,7 +967,7 @@ public class RenderLab {
         groupAlpha.setScaleY(0.6);
         HBox opacity = new HBox(0, groupAlpha, nodeAlpha);
         opacity.setAlignment(Pos.CENTER);
-        card("Opacidade de grupo", "Grupo a 50% (sem sobreposição) e nós a 50%", opacity);
+        card("Group opacity", "Group at 50% (no overlap) and nodes at 50%", opacity);
 
         Group cached = new Group();
         for (int i = 0; i < 40; i++) {
@@ -983,7 +983,7 @@ public class RenderLab {
             cached.setScaleX(0.8 + 0.2 * Math.sin(t));
             cached.setScaleY(0.8 + 0.2 * Math.sin(t));
         });
-        card("Cache", "Grupo com efeitos em cache e CacheHint.SPEED", cached);
+        card("Cache", "Group with cached effects and CacheHint.SPEED", cached);
 
         StackPane cube = new StackPane();
         Rectangle face = new Rectangle(120, 120);
@@ -996,7 +996,7 @@ public class RenderLab {
         perspective.setFill(Color.TRANSPARENT);
         perspective.setCamera(new PerspectiveCamera());
         cube.setPrefSize(CARD_W, CARD_H);
-        card("Nó 2D em perspectiva", "Rotação em Y com câmera de perspectiva", perspective);
+        card("2D node in perspective", "Rotation in Y with a perspective camera", perspective);
     }
 
     private void canvas() {
@@ -1069,7 +1069,7 @@ public class RenderLab {
                 writer.setArgb(x, y, 0xff000000 | random.nextInt(0xffffff));
             }
         });
-        wide("GraphicsContext", "Transformações, arcos, tracejado, curvas, sombra, texto, imagens, clip, ADD e PixelWriter",
+        wide("GraphicsContext", "Transforms, arcs, dashes, curves, shadow, text, images, clip, ADD and PixelWriter",
                 canvas, 520, 340);
 
         Canvas effectCanvas = new Canvas(250, 176);
@@ -1082,7 +1082,7 @@ public class RenderLab {
             }
             e.applyEffect(new BoxBlur(3 + 3 * Math.sin(t), 3, 2));
         });
-        card("applyEffect", "Efeito aplicado ao conteúdo do canvas", effectCanvas);
+        card("applyEffect", "Effect applied to the content of the canvas", effectCanvas);
     }
 
     private void scene3d() {
@@ -1195,8 +1195,8 @@ public class RenderLab {
         });
         lights.getChildren().add(wireframe);
         VBox view = new VBox(8, sub, lights);
-        wide("Cena 3D", "Box com textura, esfera com bump map, cilindro autoiluminado, toro em TriangleMesh, "
-                + "wireframe, MSAA e as quatro luzes", view, 760, 510);
+        wide("3D scene", "Textured box, bump-mapped sphere, self-illuminated cylinder, TriangleMesh torus, "
+                + "wireframe, MSAA and the four lights", view, 760, 510);
 
         Group ortho = new Group();
         for (int i = 0; i < 6; i++) {
@@ -1214,22 +1214,22 @@ public class RenderLab {
         SubScene orthoScene = new SubScene(ortho, CARD_W, CARD_H, true, SceneAntialiasing.DISABLED);
         orthoScene.setCamera(new ParallelCamera());
         orthoScene.setFill(Color.web("#0f172a"));
-        card("Câmera paralela", "Projeção ortográfica com buffer de profundidade", orthoScene);
+        card("Parallel camera", "Orthographic projection with a depth buffer", orthoScene);
     }
 
     private void controls() {
         Region a = new Region();
         a.getStyleClass().add("css-a");
         a.setPrefSize(220, 150);
-        card("Fundos e bordas CSS", "Gradiente, insets múltiplos, raios e borda segmentada", a);
+        card("CSS backgrounds and borders", "Gradient, multiple insets, radii and segmented border", a);
         Region b = new Region();
         b.getStyleClass().add("css-b");
         b.setPrefSize(200, 140);
-        card("Raios percentuais", "Bordas de quatro cores e dropshadow por CSS", b);
+        card("Percentage radii", "Four-color borders and CSS dropshadow", b);
         Region c = new Region();
         c.getStyleClass().add("css-c");
         c.setPrefSize(220, 150);
-        card("Padrão de imagem CSS", "repeating-image-pattern com borda pontilhada", c);
+        card("CSS image pattern", "repeating-image-pattern with a dotted border", c);
 
         ProgressIndicator spinner = new ProgressIndicator();
         ProgressIndicator determinate = new ProgressIndicator();
@@ -1243,22 +1243,22 @@ public class RenderLab {
         indicators.setAlignment(Pos.CENTER);
         VBox progress = new VBox(14, indicators, bar);
         progress.setAlignment(Pos.CENTER);
-        card("Progresso", "Indicador indeterminado, determinado e barra", progress);
+        card("Progress", "Indeterminate and determinate indicators and a bar", progress);
 
         Slider slider = new Slider(0, 100, 40);
-        TextField field = new TextField("Texto editável");
+        TextField field = new TextField("Editable text");
         ComboBox<String> combo = new ComboBox<>();
         combo.getItems().addAll("Vulkan", "OpenGL ES", "Software");
         combo.getSelectionModel().select(0);
         ColorPicker picker = new ColorPicker(Color.web("#f472b6"));
         ChoiceBox<String> choice = new ChoiceBox<>();
-        choice.getItems().addAll("Um", "Dois", "Três");
+        choice.getItems().addAll("One", "Two", "Three");
         choice.getSelectionModel().select(1);
-        Button button = new Button("Botão padrão");
+        Button button = new Button("Default button");
         button.setDefaultButton(true);
         VBox form = new VBox(6, slider, field, new HBox(6, combo, choice), new HBox(6, picker, button));
         form.setAlignment(Pos.CENTER_LEFT);
-        card("Controles", "Popups abrem como janelas filhas", form);
+        card("Controls", "Popups open as child windows", form);
     }
 
     private void stress() {
@@ -1267,29 +1267,29 @@ public class RenderLab {
         Slider count = new Slider(100, 20000, 2000);
         Label countLabel = new Label();
         ChoiceBox<String> kind = new ChoiceBox<>();
-        kind.getItems().addAll("Círculos com gradiente", "Imagens", "Texto", "Retângulos com sombra");
+        kind.getItems().addAll("Gradient circles", "Images", "Text", "Shadowed rectangles");
         kind.getSelectionModel().select(0);
         List<double[]> state = new ArrayList<>();
         Runnable rebuild = () -> {
             arena.getChildren().clear();
             state.clear();
             int n = (int) count.getValue();
-            countLabel.setText(n + " nós");
+            countLabel.setText(n + " nodes");
             String mode = kind.getValue();
             for (int i = 0; i < n; i++) {
                 Node node = switch (mode) {
-                    case "Imagens" -> {
+                    case "Images" -> {
                         ImageView v = new ImageView(photo);
                         v.setFitWidth(18);
                         v.setFitHeight(18);
                         yield v;
                     }
-                    case "Texto" -> {
+                    case "Text" -> {
                         Text t = new Text("✦" + i);
                         t.setFill(Color.hsb(i % 360, 0.7, 1));
                         yield t;
                     }
-                    case "Retângulos com sombra" -> {
+                    case "Shadowed rectangles" -> {
                         Rectangle r = new Rectangle(14, 14, Color.hsb(i % 360, 0.7, 1));
                         r.setEffect(new DropShadow(4, Color.BLACK));
                         yield r;
@@ -1335,10 +1335,10 @@ public class RenderLab {
                 children.get(i).relocate(s[0], s[1]);
             }
         });
-        HBox options = new HBox(12, new Label("Quantidade"), count, countLabel, kind);
+        HBox options = new HBox(12, new Label("Count"), count, countLabel, kind);
         options.setAlignment(Pos.CENTER_LEFT);
         VBox content = new VBox(8, options, arena);
-        wide("Carga", "Muitos nós animados para medir quadros por segundo", content, 980, 560);
+        wide("Load", "Many animated nodes to measure frames per second", content, 980, 560);
     }
 
     private static TriangleMesh torus(float radius, float tube, int segments, int sides) {

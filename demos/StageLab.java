@@ -894,8 +894,8 @@ public class StageLab {
     private static Node textContent() {
         TextField field = new TextField();
         field.setPromptText("Type here — IME, selection and clipboard");
-        TextArea area = new TextArea("The quick brown fox jumps over the lazy dog.\nÀ noite, vovô Kowalsky vê o ímã cair "
-                + "no pé do pinguim queixoso e vovó põe açúcar no chá de tâmaras do jabuti feliz. 🦊");
+        TextArea area = new TextArea("The quick brown fox jumps over the lazy dog.\nAccents: café, naïve, résumé, façade, "
+                + "jalapeño, Ångström, über, déjà vu. 🦊");
         area.setWrapText(true);
         VBox.setVgrow(area, Priority.ALWAYS);
         return new VBox(10, muted("Text input"), field, area);
